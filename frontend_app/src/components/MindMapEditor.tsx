@@ -60,9 +60,9 @@ import { handleDelegatedLinkClick } from '../utils/openExternal';
 import { createNodeImageGlyph, type NodeImageGlyph } from '../utils/filePreview';
 import { buildExportFileBaseName as buildExportName } from '../utils/exportFileName';
 import {
-  applyBranchColors,
-  MAP_COLOR_THEMES,
-  RAINBOW_BRANCH_COLORS,
+  buildThemeColorMap,
+  getThemeColors,
+  resolveNodeThemeColor,
 } from '../utils/mapThemes';
 import {
   BodyBand,
@@ -989,15 +989,10 @@ export function DesktopMindMapEditor({
     setIsDirty(true);
   }, []);
 
-  const applyColorTheme = useCallback((themeId: string, overwrite: boolean) => {
-    const theme = MAP_COLOR_THEMES.find((t) => t.id === themeId);
-    if (!theme) return;
-    mutate(applyBranchColors(root, theme.colors, overwrite));
-  }, [root, mutate]);
-
-  const applyRainbowBranches = useCallback((overwrite: boolean) => {
-    mutate(applyBranchColors(root, RAINBOW_BRANCH_COLORS, overwrite));
-  }, [root, mutate]);
+  const setColorTheme = useCallback((themeId: string | null) => {
+    setMapStyleState((prev) => ({ ...prev, colorThemeId: themeId }));
+    setIsDirty(true);
+  }, []);
 
   // ── Reset position ────────────────────────────────────────────────────────
   const resetNodePosition = useCallback((nodeId: string) => {
@@ -2218,6 +2213,12 @@ export function DesktopMindMapEditor({
   //  SVG RENDERING
   // ══════════════════════════════════════════════════════════════════════════
 
+  const themeColorById = useMemo(() => {
+    const colors = getThemeColors(mapStyle.colorThemeId);
+    if (!colors) return null;
+    return buildThemeColorMap(root, colors);
+  }, [root, mapStyle.colorThemeId]);
+
   const renderConnections = useCallback((node: MindMapTreeNode): JSX.Element[] => {
     const paths: JSX.Element[] = [];
     if (node.collapsed) return paths;
@@ -2238,10 +2239,13 @@ export function DesktopMindMapEditor({
       const y1 = pBox.y + pBox.h / 2;
       const x2 = childOnLeft ? cBox.x + cBox.w : cBox.x;
       const y2 = cBox.y + cBox.h / 2;
-      // A node's colour paints only the line coming *into* it. The lines
-      // going out to its children stay on the default until a child sets a
-      // colour of its own — colour no longer cascades down the subtree.
-      const branchColor = ch.edgeColor ?? ch.color ?? mapStyle.defaultEdgeColor ?? null;
+      // Explicit edge/fill colour wins; otherwise the document colour theme
+      // (by branch index + depth fade), then the map default edge colour.
+      const themeColor = themeColorById?.get(ch.id) ?? null;
+      const branchColor = ch.edgeColor
+        ?? resolveNodeThemeColor(ch.color, themeColor)
+        ?? mapStyle.defaultEdgeColor
+        ?? null;
       const branchWidth = typeof ch.edgeWidth === 'number' && ch.edgeWidth > 0 ? ch.edgeWidth : 2;
       const faded = focusMode && focusedIds.size > 0 && !focusedIds.has(node.id) && !focusedIds.has(ch.id);
       const stroke = branchColor ?? 'var(--mm-connection, #7C3AED)';
@@ -2261,7 +2265,7 @@ export function DesktopMindMapEditor({
       paths.push(...renderConnections(ch));
     }
     return paths;
-  }, [layout, focusMode, focusedIds, rootLeftCollapsed, rootRightCollapsed, mapStyle.defaultEdgeColor]);
+  }, [layout, focusMode, focusedIds, rootLeftCollapsed, rootRightCollapsed, mapStyle.defaultEdgeColor, themeColorById]);
 
   /** Opens the full-resolution original behind a node's glyph. */
   const openNodeImage = useCallback(async (node: MindMapTreeNode) => {
@@ -2330,9 +2334,8 @@ export function DesktopMindMapEditor({
     const isSelected = node.id === selectedId;
     const isEditing = node.id === editingId;
     const isDrop = node.id === dropTargetId;
-    const ownColor = node.color ?? null;
-    // Only the node's own explicit color fills the bubble — and, in
-    // renderConnections, the one line coming into it. Nothing is inherited.
+    const themeColor = isRoot ? null : (themeColorById?.get(node.id) ?? null);
+    const ownColor = resolveNodeThemeColor(node.color, themeColor);
     const rx = (isRoot ? 18 : 8) * scale;
 
     const fillColor = ownColor ?? (isRoot ? 'var(--mm-root-fill)' : 'var(--mm-node-fill)');
@@ -2474,7 +2477,7 @@ export function DesktopMindMapEditor({
     return elems;
     }, [layout, selectedId, multiSelect, editingId, editText, dropTargetId, isDragging, searchResults,
       attachmentPreviewUrls, cancelHoverPopupClose, scheduleHoverPopupClose, commitEdit, cancelEdit, getNodeAttachments, onOpenNodeAttachment, toggleCollapse, toggleCheckbox,
-      focusMode, focusedIds, rootLeftCollapsed, rootRightCollapsed, onOpenFileLink, mapStyle.defaultFontSize, mapStyle.defaultFontFamily, formatSidebarOpen]);  // eslint-disable-line react-hooks/exhaustive-deps
+      focusMode, focusedIds, rootLeftCollapsed, rootRightCollapsed, onOpenFileLink, mapStyle.defaultFontSize, mapStyle.defaultFontFamily, formatSidebarOpen, themeColorById]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const selNode = findNode(root, selectedId)?.node;
   const selFound = findNode(root, selectedId);
@@ -3084,8 +3087,7 @@ export function DesktopMindMapEditor({
               onSetCanvasGridVisible={setCanvasGridVisible}
               onSetLayoutMode={setRootLayoutMode}
               onAutoAlign={() => autoAlignSubtree(selectedId)}
-              onApplyColorTheme={applyColorTheme}
-              onApplyRainbowBranches={applyRainbowBranches}
+              onSetColorTheme={setColorTheme}
               onSetMapStyle={patchMapStyle}
               onToggleFocusMode={() => { setFocusMode((v) => { if (!v) setFocusAnchorId(selectedId); return !v; }); }}
               onZoomIn={() => setZoom((z) => Math.min(3, z + 0.15))}

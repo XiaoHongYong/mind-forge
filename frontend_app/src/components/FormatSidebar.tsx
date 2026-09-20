@@ -12,6 +12,7 @@ import {
   FONT_FAMILY_OPTIONS,
   MAP_COLOR_THEMES,
   RAINBOW_BRANCH_COLORS,
+  RAINBOW_THEME_ID,
 } from '../utils/mapThemes';
 import './FormatSidebar.css';
 
@@ -443,8 +444,7 @@ export interface FormatSidebarProps {
   onSetCanvasGridVisible: (visible: boolean) => void;
   onSetLayoutMode: (mode: RootLayoutMode) => void;
   onAutoAlign: () => void;
-  onApplyColorTheme: (themeId: string, overwrite: boolean) => void;
-  onApplyRainbowBranches: (overwrite: boolean) => void;
+  onSetColorTheme: (themeId: string | null) => void;
   onSetMapStyle: (patch: Partial<MapStyle>) => void;
   onToggleFocusMode: () => void;
   onZoomIn: () => void;
@@ -483,8 +483,7 @@ export function FormatSidebar({
   onSetCanvasGridVisible,
   onSetLayoutMode,
   onAutoAlign,
-  onApplyColorTheme,
-  onApplyRainbowBranches,
+  onSetColorTheme,
   onSetMapStyle,
   onToggleFocusMode,
   onZoomIn,
@@ -493,7 +492,7 @@ export function FormatSidebar({
   onZoomFit,
   onClose,
 }: FormatSidebarProps): JSX.Element {
-  const [themeOverwrite, setThemeOverwrite] = useState(false);
+  const activeThemeId = mapStyle.colorThemeId ?? null;
   const docBase = mapStyle.defaultFontSize ?? NODE_BASE_FONT_SIZE;
   const effectiveFontSize = selectedNode?.fontSize ?? docBase;
   const isBold = selectedNode
@@ -765,44 +764,49 @@ export function FormatSidebar({
 
             <section className="mm-fs-section">
               <h3 className="mm-fs-label">Colour theme</h3>
-              <label className="mm-fs-toggle" style={{ marginBottom: 8 }}>
-                <input
-                  type="checkbox"
-                  checked={themeOverwrite}
-                  onChange={(e) => setThemeOverwrite(e.target.checked)}
-                />
-                <span>Overwrite existing branch colours</span>
-              </label>
+              <p className="mm-fs-hint" style={{ marginBottom: 8 }}>
+                Colours branches by index; deeper nodes fade. Nodes with their own fill keep it.
+              </p>
               <div className="mm-fs-theme-list">
-                {MAP_COLOR_THEMES.map((theme) => (
-                  <button
-                    key={theme.id}
-                    type="button"
-                    className="mm-fs-theme-btn"
-                    title={`Apply ${theme.name}`}
-                    onClick={() => onApplyColorTheme(theme.id, themeOverwrite)}
-                  >
-                    <span className="mm-fs-theme-swatches" aria-hidden>
-                      {theme.colors.slice(0, 5).map((c) => (
-                        <span key={c} style={{ background: c }} />
-                      ))}
-                    </span>
-                    <span>{theme.name}</span>
-                  </button>
-                ))}
-                <button
-                  type="button"
-                  className="mm-fs-theme-btn"
-                  title="Rainbow branches"
-                  onClick={() => onApplyRainbowBranches(themeOverwrite)}
-                >
-                  <span className="mm-fs-theme-swatches" aria-hidden>
-                    {RAINBOW_BRANCH_COLORS.slice(0, 5).map((c) => (
-                      <span key={c} style={{ background: c }} />
-                    ))}
-                  </span>
-                  <span>Rainbow</span>
-                </button>
+                {MAP_COLOR_THEMES.map((theme) => {
+                  const active = activeThemeId === theme.id;
+                  return (
+                    <button
+                      key={theme.id}
+                      type="button"
+                      className={`mm-fs-theme-btn${active ? ' mm-fs-theme-btn--active' : ''}`}
+                      title={active ? `Clear ${theme.name}` : `Apply ${theme.name}`}
+                      aria-pressed={active}
+                      onClick={() => onSetColorTheme(active ? null : theme.id)}
+                    >
+                      <span className="mm-fs-theme-swatches" aria-hidden>
+                        {theme.colors.slice(0, 5).map((c) => (
+                          <span key={c} style={{ background: c }} />
+                        ))}
+                      </span>
+                      <span>{theme.name}</span>
+                    </button>
+                  );
+                })}
+                {(() => {
+                  const active = activeThemeId === RAINBOW_THEME_ID;
+                  return (
+                    <button
+                      type="button"
+                      className={`mm-fs-theme-btn${active ? ' mm-fs-theme-btn--active' : ''}`}
+                      title={active ? 'Clear Rainbow' : 'Rainbow branches'}
+                      aria-pressed={active}
+                      onClick={() => onSetColorTheme(active ? null : RAINBOW_THEME_ID)}
+                    >
+                      <span className="mm-fs-theme-swatches" aria-hidden>
+                        {RAINBOW_BRANCH_COLORS.slice(0, 5).map((c) => (
+                          <span key={c} style={{ background: c }} />
+                        ))}
+                      </span>
+                      <span>Rainbow</span>
+                    </button>
+                  );
+                })()}
               </div>
             </section>
 

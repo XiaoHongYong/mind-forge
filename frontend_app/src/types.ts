@@ -37,6 +37,12 @@ export interface MapStyle {
   defaultFontSize?: number | null;
   /** Edge colour when a child has neither `edgeColor` nor `color`. */
   defaultEdgeColor?: string | null;
+  /**
+   * Document colour theme id (preset or `rainbow`).
+   * Resolved at render time for nodes without an explicit `color`;
+   * never writes colours onto the tree.
+   */
+  colorThemeId?: string | null;
 }
 
 export interface MindMapTreeNode {

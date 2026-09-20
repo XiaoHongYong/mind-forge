@@ -444,6 +444,10 @@
   text-align: left;
 }
 .mm-fs-theme-btn:hover { background: var(--mm-btn-hover); }
+.mm-fs-theme-btn--active {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
 
 .mm-fs-theme-swatches {
   display: flex;
