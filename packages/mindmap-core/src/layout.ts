@@ -9,7 +9,7 @@
  */
 
 import { H_GAP, V_GAP } from './constants';
-import { describeNode, measureNodeSize, nodeScaleForDepth } from './geometry';
+import { describeNode, measureNodeSize, nodeScaleForDepth, type LayoutStyleDefaults } from './geometry';
 import type { DescribeNode, LayoutEntry, LayoutNode } from './types';
 
 /**
@@ -21,10 +21,11 @@ export const estimateSubtreeHeight = <N extends LayoutNode<N>>(
   node: N,
   depth: number,
   describe: DescribeNode<N> = describeNode,
+  defaults?: LayoutStyleDefaults,
 ): number => {
   const scale = nodeScaleForDepth(depth);
   const parts = describe(node);
-  const { h } = measureNodeSize(node, parts, scale);
+  const { h } = measureNodeSize(node, parts, scale, defaults);
   const visualH = h + parts.visualTopExtra * scale;
 
   if (!node.children || node.children.length === 0 || node.collapsed) {
@@ -33,7 +34,7 @@ export const estimateSubtreeHeight = <N extends LayoutNode<N>>(
 
   let childrenH = 0;
   node.children.forEach((ch, i) => {
-    childrenH += estimateSubtreeHeight(ch, depth + 1, describe);
+    childrenH += estimateSubtreeHeight(ch, depth + 1, describe, defaults);
     if (i > 0) childrenH += V_GAP;
   });
   return Math.max(visualH, childrenH);
@@ -44,6 +45,7 @@ export const layoutTree = <N extends LayoutNode<N>>(
   startX = 0,
   startY = 0,
   describe: DescribeNode<N> = describeNode,
+  defaults?: LayoutStyleDefaults,
 ): Record<string, LayoutEntry<N>> => {
   const pos: Record<string, Partial<LayoutEntry<N>>> = {};
 
@@ -51,7 +53,7 @@ export const layoutTree = <N extends LayoutNode<N>>(
   const computeHeight = (node: N, depth: number): number => {
     const scale = nodeScaleForDepth(depth);
     const parts = describe(node);
-    const { w, h } = measureNodeSize(node, parts, scale);
+    const { w, h } = measureNodeSize(node, parts, scale, defaults);
     const visualTopExtra = parts.visualTopExtra * scale;
     const visualH = h + visualTopExtra;
 

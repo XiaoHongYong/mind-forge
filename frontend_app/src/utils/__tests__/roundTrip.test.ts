@@ -59,6 +59,13 @@ function fixture(): MindMapTreeNode {
       text: 'Formatted',
       side: 'right',
       color: '#22c55e',
+      fontSize: 16,
+      fontWeight: 'bold',
+      textColor: '#fefce8',
+      shape: 'capsule',
+      borderColor: '#166534',
+      edgeColor: '#16a34a',
+      edgeWidth: 3,
       collapsed: true,
       icons: ['Target', 'Sparkles'],
       checked: true,
@@ -95,6 +102,13 @@ function fixture(): MindMapTreeNode {
 interface Fidelity {
   notes?: boolean;
   color?: boolean;
+  fontSize?: boolean;
+  fontWeight?: boolean;
+  textColor?: boolean;
+  shape?: boolean;
+  borderColor?: boolean;
+  edgeColor?: boolean;
+  edgeWidth?: boolean;
   side?: boolean;
   collapsed?: boolean;
   icons?: boolean;
@@ -110,7 +124,9 @@ interface Fidelity {
 
 /** The native format loses nothing. */
 const NATIVE: Fidelity = {
-  notes: true, color: true, side: true, collapsed: true, icons: true,
+  notes: true, color: true, fontSize: true, fontWeight: true, textColor: true,
+  shape: true, borderColor: true, edgeColor: true, edgeWidth: true,
+  side: true, collapsed: true, icons: true,
   checked: true, progress: true, dates: true, urls: true, tags: true,
   image: true, attachments: true,
 };
@@ -127,6 +143,13 @@ function stripTo(node: MindMapTreeNode, f: Fidelity): unknown {
     text: node.text,
     ...(f.notes ? { notes: node.notes ?? '' } : {}),
     ...(f.color ? { color: node.color ?? null } : {}),
+    ...(f.fontSize ? { fontSize: node.fontSize ?? null } : {}),
+    ...(f.fontWeight ? { fontWeight: node.fontWeight ?? null } : {}),
+    ...(f.textColor ? { textColor: node.textColor ?? null } : {}),
+    ...(f.shape ? { shape: node.shape ?? null } : {}),
+    ...(f.borderColor ? { borderColor: node.borderColor ?? null } : {}),
+    ...(f.edgeColor ? { edgeColor: node.edgeColor ?? null } : {}),
+    ...(f.edgeWidth ? { edgeWidth: node.edgeWidth ?? null } : {}),
     ...(f.side ? { side: node.side ?? null } : {}),
     ...(f.collapsed ? { collapsed: node.collapsed ?? false } : {}),
     ...(f.icons ? { icons: node.icons ?? [] } : {}),

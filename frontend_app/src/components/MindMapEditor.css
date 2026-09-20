@@ -1,8 +1,8 @@
 /* ── CSS variables (dark/light via :root / :root.light) ─────────────────────── */
 :root {
-  --mm-root-fill:       var(--accent);
-  --mm-root-stroke:     var(--accent);
-  --mm-root-text:       #ffffff;
+  --mm-root-fill:       #ffffff;
+  --mm-root-stroke:     #ffffff;
+  --mm-root-text:       #0f172a;
   --mm-node-fill:       #1e293b;
   --mm-node-stroke:     #334155;
   --mm-node-text:       #e2e8f0;
@@ -26,8 +26,8 @@
 }
 
 :root.light {
-  --mm-root-fill:       var(--accent);
-  --mm-root-stroke:     var(--accent);
+  --mm-root-fill:       #0f172a;
+  --mm-root-stroke:     #0f172a;
   --mm-root-text:       #ffffff;
   --mm-node-fill:       #ffffff;
   --mm-node-stroke:     #cbd5e1;
@@ -1228,9 +1228,12 @@
 .mm-canvas:active { cursor: grabbing; }
 
 /* SVG dots grid */
-.mm-canvas {
+.mm-canvas[data-grid="on"] {
   background-image: radial-gradient(circle, var(--mm-toolbar-border) 1px, transparent 1px);
   background-size: 28px 28px;
+}
+.mm-canvas[data-grid="off"] {
+  background-image: none;
 }
 
 /* ── Connections ─────────────────────────────────────────────────────────── */

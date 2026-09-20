@@ -27,7 +27,7 @@ import {
 import type { JSX, ReactNode } from 'react';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
-import type { MindMapTree, MindMapTreeNode, NodeAttachmentRef, UrlEntry } from '../types';
+import type { MapStyle, MindMapTree, MindMapTreeNode, NodeAttachmentRef, NodeShape, UrlEntry } from '../types';
 import { useThemeStore } from '../store/theme';
 import { ThemePanel } from './ThemePanel';
 import { MindMapIconPicker } from './MindMapIconPicker.tsx';
@@ -52,13 +52,18 @@ import {
   defaultRoot,
   migrateNode,
 } from './MindMapHelpers';
-import { layoutTree, bezierPath, describeNode, nodeGeometry, NODE_BASE_FONT_SIZE } from '@mindforge/mindmap-core';
+import { layoutTree, bezierPath, describeNode, nodeGeometry, nodeBaseFontSize, nodeLineHeight } from '@mindforge/mindmap-core';
 import { appendAttachmentMarkdownLinks, getVisibleNodeTextLines } from '../utils/nodeAttachments';
 import { exportSvgAsPdf, renderSvgToCanvas } from '../utils/pdfExport';
 import { downloadBlob, downloadDataUrl } from '../utils/download';
 import { handleDelegatedLinkClick } from '../utils/openExternal';
 import { createNodeImageGlyph, type NodeImageGlyph } from '../utils/filePreview';
 import { buildExportFileBaseName as buildExportName } from '../utils/exportFileName';
+import {
+  applyBranchColors,
+  MAP_COLOR_THEMES,
+  RAINBOW_BRANCH_COLORS,
+} from '../utils/mapThemes';
 import {
   BodyBand,
   CollapseControls,
@@ -106,9 +111,66 @@ const PROGRESS_CYCLE: (number | null)[] = [...PROGRESS_PRESETS, null];
 import { useEffectiveKeyboardLayout, useUiStore, useResolvedDensity, type TrayPosition } from '../store/ui';
 import { ColorTray } from './ColorTray';
 import { IconTray } from './IconTray';
+import { FormatSidebar, type FormatSidebarTab } from './FormatSidebar';
 import { matchShortcut, formatShortcut, formatButtonShortcut, SHORTCUTS } from '../shortcuts/registry';
 import { isMac } from '../platform/isMac';
 import './MindMapEditor.css';
+
+function NodeBubble({
+  x, y, w, h, shape, rx, fill, stroke, strokeWidth, className,
+}: {
+  x: number; y: number; w: number; h: number;
+  shape: NodeShape | null | undefined;
+  rx: number;
+  fill: string; stroke: string; strokeWidth: number;
+  className?: string;
+}): JSX.Element {
+  // `null` is Auto (depth-derived radius), not the same as explicit "rounded".
+  // Root's depth rx is often ≥ half the short side, so treating Auto as Rounded
+  // made an explicit Rounded choice look identical to Capsule.
+  const kind = shape ?? 'auto';
+  if (kind === 'ellipse') {
+    return (
+      <ellipse
+        cx={x + w / 2}
+        cy={y + h / 2}
+        rx={w / 2}
+        ry={h / 2}
+        fill={fill}
+        stroke={stroke}
+        strokeWidth={strokeWidth}
+        className={className}
+      />
+    );
+  }
+  const short = Math.min(w, h);
+  let corner: number;
+  if (kind === 'rect') {
+    corner = 0;
+  } else if (kind === 'capsule') {
+    corner = short / 2;
+  } else if (kind === 'rounded') {
+    // Soft corners, clearly short of a pill even on large root nodes.
+    corner = Math.min(short * 0.15, Math.max(8, short * 0.18));
+  } else {
+    // Auto: keep hierarchy radius, but never collapse into a full capsule.
+    corner = Math.min(rx, short * 0.15);
+  }
+  return (
+    <rect
+      x={x}
+      y={y}
+      width={w}
+      height={h}
+      rx={corner}
+      ry={corner}
+      fill={fill}
+      stroke={stroke}
+      strokeWidth={strokeWidth}
+      className={className}
+    />
+  );
+}
 
 // ── Drag state ────────────────────────────────────────────────────────────────
 interface DragState {
@@ -170,6 +232,14 @@ export function DesktopMindMapEditor({
   const setShortcutsPinned = useUiStore((s) => s.setShortcutsPinned);
   const shortcutsPos = useUiStore((s) => s.shortcutsPos);
   const setShortcutsPos = useUiStore((s) => s.setShortcutsPos);
+  const formatSidebarOpen = useUiStore((s) => s.formatSidebarOpen);
+  const setFormatSidebarOpen = useUiStore((s) => s.setFormatSidebarOpen);
+  const canvasGridVisible = useUiStore((s) => s.canvasGridVisible);
+  const setCanvasGridVisible = useUiStore((s) => s.setCanvasGridVisible);
+  const canvasColor = useThemeStore((s) => s.canvasColor);
+  const setCanvasColor = useThemeStore((s) => s.setCanvasColor);
+  const [formatSidebarTab, setFormatSidebarTab] = useState<FormatSidebarTab>('style');
+  const [mapStyle, setMapStyleState] = useState<MapStyle>(() => initialTree?.map_style ?? {});
 
   // ── Mobile detection ───────────────────────────────────────────────────────
   const [isMobile, setIsMobile] = useState(() =>
@@ -543,6 +613,7 @@ export function DesktopMindMapEditor({
     setFocusMode(Boolean(savedView?.focus_mode));
     setFocusAnchorId(nextFocusAnchor);
     setLayoutMode(inferRootLayoutMode(r, savedView?.layout_mode));
+    setMapStyleState(initialTree.map_style ?? {});
     skipNextAutoPan.current = true;
     setIsDirty(false);
   }, [initialTree]);
@@ -553,7 +624,7 @@ export function DesktopMindMapEditor({
     // currentTreeSnapshot is read when the effect runs, not while rendering,
     // so it stays out of the deps: adding it would fire on every pan and zoom.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onTreeChange, root]);
+  }, [onTreeChange, root, mapStyle]);
 
   useEffect(() => {
     onSelectionChange?.(selectedId);
@@ -655,9 +726,17 @@ export function DesktopMindMapEditor({
    * meta strip is drawn in space nothing reserved and the text loses 18px.
    */
   const layout = useMemo(
-    () => layoutTree(root, 0, 0, (node) =>
-      describeNode(node, { attachmentCount: getNodeAttachments(node.id, node.attachments).length })),
-    [root, getNodeAttachments],
+    () => layoutTree(
+      root,
+      0,
+      0,
+      (node) => describeNode(node, { attachmentCount: getNodeAttachments(node.id, node.attachments).length }),
+      {
+        fontSize: mapStyle.defaultFontSize ?? undefined,
+        fontFamily: mapStyle.defaultFontFamily ?? undefined,
+      },
+    ),
+    [root, getNodeAttachments, mapStyle.defaultFontSize, mapStyle.defaultFontFamily],
   );
 
   const loadAttachmentPreview = useCallback(async (attachment: NodeAttachmentRef) => {
@@ -756,6 +835,41 @@ export function DesktopMindMapEditor({
     if (next) mutate(next);
   }, [root, mutate]);
 
+  const setNodeTextColor = useCallback((nodeId: string, textColor: string | null) => {
+    const next = editNode(root, nodeId, (node) => { node.textColor = textColor; });
+    if (next) mutate(next);
+  }, [root, mutate]);
+
+  const setNodeFontSize = useCallback((nodeId: string, fontSize: number | null) => {
+    const next = editNode(root, nodeId, (node) => { node.fontSize = fontSize; });
+    if (next) mutate(next);
+  }, [root, mutate]);
+
+  const setNodeFontWeight = useCallback((nodeId: string, fontWeight: 'normal' | 'bold' | null) => {
+    const next = editNode(root, nodeId, (node) => { node.fontWeight = fontWeight; });
+    if (next) mutate(next);
+  }, [root, mutate]);
+
+  const setNodeShape = useCallback((nodeId: string, shape: NodeShape | null) => {
+    const next = editNode(root, nodeId, (node) => { node.shape = shape; });
+    if (next) mutate(next);
+  }, [root, mutate]);
+
+  const setNodeBorderColor = useCallback((nodeId: string, borderColor: string | null) => {
+    const next = editNode(root, nodeId, (node) => { node.borderColor = borderColor; });
+    if (next) mutate(next);
+  }, [root, mutate]);
+
+  const setNodeEdgeColor = useCallback((nodeId: string, edgeColor: string | null) => {
+    const next = editNode(root, nodeId, (node) => { node.edgeColor = edgeColor; });
+    if (next) mutate(next);
+  }, [root, mutate]);
+
+  const setNodeEdgeWidth = useCallback((nodeId: string, edgeWidth: number | null) => {
+    const next = editNode(root, nodeId, (node) => { node.edgeWidth = edgeWidth; });
+    if (next) mutate(next);
+  }, [root, mutate]);
+
   // ── Checkbox ──────────────────────────────────────────────────────────────
   const toggleCheckbox = useCallback((nodeId: string) => {
     const next = editNode(root, nodeId, (node) => { node.checked = toggleChecked(node.checked); });
@@ -851,6 +965,40 @@ export function DesktopMindMapEditor({
     setRootRightCollapsed(false);
   }, [layoutMode, root, mutate]);
 
+  const setRootLayoutMode = useCallback((nextMode: RootLayoutMode) => {
+    if (nextMode === layoutMode) return;
+    setLayoutMode(nextMode);
+    mutate(applyRootLayoutMode(root, nextMode));
+    setRootLeftCollapsed(false);
+    setRootRightCollapsed(false);
+  }, [layoutMode, root, mutate]);
+
+  const setNodeSide = useCallback((nodeId: string, side: 'left' | 'right') => {
+    const found = findNode(root, nodeId);
+    if (!found || found.parent?.id !== 'root') return;
+    let nextRoot = editNode(root, nodeId, (node) => { node.side = side; }) ?? root;
+    if (side === 'left' && layoutMode === 'tree') {
+      setLayoutMode('map');
+      // Keep the explicit side — do not run clockwise rebalance.
+    }
+    mutate(nextRoot);
+  }, [root, mutate, layoutMode]);
+
+  const patchMapStyle = useCallback((patch: Partial<MapStyle>) => {
+    setMapStyleState((prev) => ({ ...prev, ...patch }));
+    setIsDirty(true);
+  }, []);
+
+  const applyColorTheme = useCallback((themeId: string, overwrite: boolean) => {
+    const theme = MAP_COLOR_THEMES.find((t) => t.id === themeId);
+    if (!theme) return;
+    mutate(applyBranchColors(root, theme.colors, overwrite));
+  }, [root, mutate]);
+
+  const applyRainbowBranches = useCallback((overwrite: boolean) => {
+    mutate(applyBranchColors(root, RAINBOW_BRANCH_COLORS, overwrite));
+  }, [root, mutate]);
+
   // ── Reset position ────────────────────────────────────────────────────────
   const resetNodePosition = useCallback((nodeId: string) => {
     // This node only. `autoAlignSubtree` is the one that clears the branch.
@@ -912,6 +1060,34 @@ export function DesktopMindMapEditor({
 
   const bulkSetColor = useCallback((color: string | null) => {
     mutate(editNodes(root, getTargetIds(), (node) => { node.color = color; }));
+  }, [root, mutate, getTargetIds]);
+
+  const bulkSetTextColor = useCallback((textColor: string | null) => {
+    mutate(editNodes(root, getTargetIds(), (node) => { node.textColor = textColor; }));
+  }, [root, mutate, getTargetIds]);
+
+  const bulkSetFontSize = useCallback((fontSize: number | null) => {
+    mutate(editNodes(root, getTargetIds(), (node) => { node.fontSize = fontSize; }));
+  }, [root, mutate, getTargetIds]);
+
+  const bulkSetFontWeight = useCallback((fontWeight: 'normal' | 'bold' | null) => {
+    mutate(editNodes(root, getTargetIds(), (node) => { node.fontWeight = fontWeight; }));
+  }, [root, mutate, getTargetIds]);
+
+  const bulkSetShape = useCallback((shape: NodeShape | null) => {
+    mutate(editNodes(root, getTargetIds(), (node) => { node.shape = shape; }));
+  }, [root, mutate, getTargetIds]);
+
+  const bulkSetBorderColor = useCallback((borderColor: string | null) => {
+    mutate(editNodes(root, getTargetIds(), (node) => { node.borderColor = borderColor; }));
+  }, [root, mutate, getTargetIds]);
+
+  const bulkSetEdgeColor = useCallback((edgeColor: string | null) => {
+    mutate(editNodes(root, getTargetIds(), (node) => { node.edgeColor = edgeColor; }));
+  }, [root, mutate, getTargetIds]);
+
+  const bulkSetEdgeWidth = useCallback((edgeWidth: number | null) => {
+    mutate(editNodes(root, getTargetIds(), (node) => { node.edgeWidth = edgeWidth; }));
   }, [root, mutate, getTargetIds]);
 
   const bulkDelete = useCallback(() => {
@@ -1237,7 +1413,8 @@ export function DesktopMindMapEditor({
       selected_node_id: selectedId,
       layout_mode: layoutMode,
     },
-  }), [root, pan, zoom, focusMode, focusAnchorId, selectedId, layoutMode]);
+    map_style: Object.keys(mapStyle).length > 0 ? { ...mapStyle } : undefined,
+  }), [root, pan, zoom, focusMode, focusAnchorId, selectedId, layoutMode, mapStyle]);
 
   const handleSave = useCallback(() => {
     if (saving) return;
@@ -1465,6 +1642,10 @@ export function DesktopMindMapEditor({
         setIconTray(!iconTrayEnabled);
         toast('view.iconTray', iconTrayEnabled ? 'Icon tray off' : 'Icon tray on');
       },
+      'view.formatSidebar': () => {
+        setFormatSidebarOpen(!formatSidebarOpen);
+        toast('view.formatSidebar', formatSidebarOpen ? 'Format panel off' : 'Format panel on');
+      },
     };
 
     const actionId = matchShortcut(e, keyboardLayout);
@@ -1479,7 +1660,7 @@ export function DesktopMindMapEditor({
     toggleCheckbox, undo, redo, toggleCollapse, showToast, resetNodePosition, resetAllPositions, autoAlignSubtree, showIconPicker, showColorPicker, focusMode, focusedIds,
     hasBulk, bulkDelete, bulkToggleCheckbox, bulkCycleProgress, bulkToggleCollapse, bulkResetPosition, keyboardLayout,
     colourTrayEnabled, setColourTray, iconTrayEnabled, setIconTray, openFileLinkPicker, onOpenFileLink,
-    toggleLayoutMode, layoutMode]);
+    toggleLayoutMode, layoutMode, formatSidebarOpen, setFormatSidebarOpen]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -2060,17 +2241,19 @@ export function DesktopMindMapEditor({
       // A node's colour paints only the line coming *into* it. The lines
       // going out to its children stay on the default until a child sets a
       // colour of its own — colour no longer cascades down the subtree.
-      const branchColor = ch.color;
+      const branchColor = ch.edgeColor ?? ch.color ?? mapStyle.defaultEdgeColor ?? null;
+      const branchWidth = typeof ch.edgeWidth === 'number' && ch.edgeWidth > 0 ? ch.edgeWidth : 2;
       const faded = focusMode && focusedIds.size > 0 && !focusedIds.has(node.id) && !focusedIds.has(ch.id);
+      const stroke = branchColor ?? 'var(--mm-connection, #7C3AED)';
       paths.push(
         <path
           key={`c-${node.id}-${ch.id}`}
           d={bezierPath(x1, y1, x2, y2)}
           className={`mm-connection${faded ? ' mm-faded' : ''}`}
           fill="none"
-          stroke={branchColor ?? 'var(--mm-connection, #7C3AED)'}
-          style={{ stroke: branchColor ?? 'var(--mm-connection, #7C3AED)' }}
-          strokeWidth={2}
+          stroke={stroke}
+          style={{ stroke }}
+          strokeWidth={branchWidth}
           strokeLinecap="round"
           opacity={faded ? 0.2 : 1}
         />,
@@ -2078,7 +2261,7 @@ export function DesktopMindMapEditor({
       paths.push(...renderConnections(ch));
     }
     return paths;
-  }, [layout, focusMode, focusedIds, rootLeftCollapsed, rootRightCollapsed]);
+  }, [layout, focusMode, focusedIds, rootLeftCollapsed, rootRightCollapsed, mapStyle.defaultEdgeColor]);
 
   /** Opens the full-resolution original behind a node's glyph. */
   const openNodeImage = useCallback(async (node: MindMapTreeNode) => {
@@ -2160,11 +2343,22 @@ export function DesktopMindMapEditor({
       ? '#22c55e'
       : isSelected
         ? 'var(--accent)'
-        : (ownColor ?? (isRoot ? 'var(--mm-root-stroke)' : 'var(--mm-node-stroke)'));
-    const textColor = ownColor ? '#ffffff' : (isRoot ? 'var(--mm-root-text)' : 'var(--mm-node-text)');
+        : (node.borderColor ?? ownColor ?? (isRoot ? 'var(--mm-root-stroke)' : 'var(--mm-node-stroke)'));
+    const textColor = node.textColor
+      ?? (ownColor ? '#ffffff' : (isRoot ? 'var(--mm-root-text)' : 'var(--mm-node-text)'));
 
-    const fontSize = NODE_BASE_FONT_SIZE * scale;
-    const fontWeight = isRoot ? 'bold' : depth === 1 ? 600 : 'normal';
+    const styleDefaults = {
+      fontSize: mapStyle.defaultFontSize ?? undefined,
+      fontFamily: mapStyle.defaultFontFamily ?? undefined,
+    };
+    const baseFont = nodeBaseFontSize(node, styleDefaults);
+    const fontSize = baseFont * scale;
+    const lineH = nodeLineHeight(baseFont, scale);
+    const fontWeight: NodeVisual['fontWeight'] = node.fontWeight === 'bold'
+      ? 'bold'
+      : node.fontWeight === 'normal'
+        ? 'normal'
+        : (isRoot ? 'bold' : depth === 1 ? 600 : 'normal');
 
     // What the node is made of, and where each band starts, both come from the
     // entry the layout produced. Working either out again here is how the
@@ -2172,9 +2366,9 @@ export function DesktopMindMapEditor({
     // and over attachments held outside the tree — and draw an 18px strip in
     // space nothing had reserved.
     const parts = box.parts;
-    const geom = nodeGeometry(box, parts, scale);
+    const geom = nodeGeometry(box, parts, scale, lineH);
     const nodeImage = node.image?.thumb ? node.image : null;
-    const visual: NodeVisual = { ownColor, fillColor, strokeColor, textColor, fontSize, fontWeight, scale };
+    const visual: NodeVisual = { ownColor, fillColor, strokeColor, textColor, fontSize, fontWeight, lineH, scale };
     const checkedInfo = (node.children.length > 0 && node.checked != null) ? countChecked(node) : null;
 
     const isMulti = multiSelect.has(node.id);
@@ -2191,6 +2385,7 @@ export function DesktopMindMapEditor({
             setMultiSelect(new Set());
           }
           setSelectedId(node.id); setShowColorPicker(false); setContextMenu(null);
+          if (formatSidebarOpen) setFormatSidebarTab('style');
         }}
         onDoubleClick={(e) => { e.stopPropagation(); setSelectedId(node.id); startEditing(node); }}
         onMouseEnter={() => {
@@ -2210,8 +2405,18 @@ export function DesktopMindMapEditor({
       >
         {parts.hasDate && <DateBadge box={box} node={node} />}
 
-        <rect x={box.x} y={box.y} width={box.w} height={box.h} rx={rx} ry={rx} fill={fillColor} stroke={strokeColor}
-          strokeWidth={isSelected ? 2.5 : isDrop ? 3 : 1.5} className={isSelected ? 'mm-node-selected' : ''} />
+        <NodeBubble
+          x={box.x}
+          y={box.y}
+          w={box.w}
+          h={box.h}
+          shape={node.shape}
+          rx={rx}
+          fill={fillColor}
+          stroke={strokeColor}
+          strokeWidth={isSelected ? 2.5 : isDrop ? 3 : 1.5}
+          className={isSelected ? 'mm-node-selected' : ''}
+        />
 
         <MetaBand box={box} geom={geom} parts={parts} visual={visual} />
 
@@ -2269,9 +2474,11 @@ export function DesktopMindMapEditor({
     return elems;
     }, [layout, selectedId, multiSelect, editingId, editText, dropTargetId, isDragging, searchResults,
       attachmentPreviewUrls, cancelHoverPopupClose, scheduleHoverPopupClose, commitEdit, cancelEdit, getNodeAttachments, onOpenNodeAttachment, toggleCollapse, toggleCheckbox,
-      focusMode, focusedIds, rootLeftCollapsed, rootRightCollapsed, onOpenFileLink]);  // eslint-disable-line react-hooks/exhaustive-deps
+      focusMode, focusedIds, rootLeftCollapsed, rootRightCollapsed, onOpenFileLink, mapStyle.defaultFontSize, mapStyle.defaultFontFamily, formatSidebarOpen]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const selNode = findNode(root, selectedId)?.node;
+  const selFound = findNode(root, selectedId);
+  const isRootChild = Boolean(selFound?.parent && selFound.parent.id === 'root');
 
   const traysByPosition = useMemo(() => {
     const result: Record<TrayPosition, Array<'colour' | 'icon'>> = { top: [], bottom: [], left: [], right: [] };
@@ -2354,6 +2561,20 @@ export function DesktopMindMapEditor({
       )}
     </button>
   );
+  const formatSidebarBtn = (
+    <button
+      className={`mm-btn mm-essential${formatSidebarOpen ? ' mm-btn--active' : ''}`}
+      data-label="Format"
+      data-shortcut={formatButtonShortcut('view.formatSidebar', keyboardLayout)}
+      onClick={() => setFormatSidebarOpen(!formatSidebarOpen)}
+      title={`Format panel (${formatShortcut('view.formatSidebar', keyboardLayout)})`}
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h10M4 12h16M4 18h7" />
+        <rect x="16" y="4" width="4" height="16" rx="1" />
+      </svg>
+    </button>
+  );
 
   return (
     <div className="mm-root" data-density={densityPreset} data-toolbar-labels={toolbarLabels} data-shortcuts={buttonShortcutsVisible} ref={containerRef}>
@@ -2398,6 +2619,7 @@ export function DesktopMindMapEditor({
           <div className="mm-toolbar-center" aria-hidden />
           {densityPreset === 'large' && (
             <div className="mm-toolbar-nav-end">
+              {formatSidebarBtn}
               {themeBtn}
               <ThemePanel toolbarButton />
             </div>
@@ -2650,7 +2872,7 @@ export function DesktopMindMapEditor({
                 <>
                   {toolbarGroup('Insert', <>{notesBtn}{datesBtn}{tagsBtn}{linkBtn}{urlBtn}{imageBtn}{attachBtn}</>)}
                   {zoomGroup}
-                  {toolbarGroup('Navigate', <>{alignBtn}{layoutBtn}{focusBtn}{searchBtn}{shortcutsBtn}</>)}
+                  {toolbarGroup('Navigate', <>{alignBtn}{layoutBtn}{focusBtn}{formatSidebarBtn}{searchBtn}{shortcutsBtn}</>)}
                   {outputGroup}
                   {toolbarGroup('Settings', <>{themeBtn}<ThemePanel toolbarButton /></>)}
                 </>
@@ -2670,7 +2892,7 @@ export function DesktopMindMapEditor({
                 {toolbarGroup('Links', <>{linkBtn}{urlBtn}</>)}
                 {toolbarGroup('Files', <>{imageBtn}{attachBtn}</>)}
                 {zoomGroup}
-                {toolbarGroup('Arrange', <>{alignBtn}{layoutBtn}{focusBtn}</>)}
+                {toolbarGroup('Arrange', <>{alignBtn}{layoutBtn}{focusBtn}{formatSidebarBtn}</>)}
                 {toolbarGroup('Find', <>{searchBtn}{shortcutsBtn}</>)}
                 {outputGroup}
                 {toolbarGroup('Appearance', themeBtn)}
@@ -2697,6 +2919,7 @@ export function DesktopMindMapEditor({
                     ['node.autoAlign', 'Auto-align', () => autoAlignSubtree(selectedId)],
                     ['view.layoutMode', 'Map / tree layout', toggleLayoutMode],
                     ['view.focusMode', 'Focus mode', () => { setFocusMode((v) => { if (!v) setFocusAnchorId(selectedId); return !v; }); }],
+                    ['view.formatSidebar', 'Format panel', () => setFormatSidebarOpen(!formatSidebarOpen)],
                     ['find.shortcuts', 'Shortcuts', () => setShowShortcuts((v) => !v)],
                     ['node.url', 'URL', () => setShowUrlDialog((v) => !v)],
                     ['node.addImage', 'Image', () => { nodeImageTargetRef.current = selectedId; nodeImageInputRef.current?.click(); }],
@@ -2752,12 +2975,32 @@ export function DesktopMindMapEditor({
             </div>
           )}
       <div className="mm-canvas-wrap">
-        <svg ref={svgRef} className="mm-canvas" onMouseDown={onMouseDownSvg} onMouseMove={onMouseMoveSvg} onMouseUp={onMouseUpSvg} onMouseLeave={onMouseUpSvg}
-          onTouchStart={onTouchStartSvg} onTouchMove={onTouchMoveSvg} onTouchEnd={onTouchEndSvg} onTouchCancel={onTouchEndSvg}
-          onDragOver={onDragOverSvg} onDragLeave={onDragLeaveSvg} onDrop={(e) => { void onDropSvg(e); }}
-          onClick={() => { setShowColorPicker(false); setContextMenu(null); setShowIconPicker(false); setShowExportMenu(false); setShowToolbarOverflow(false); if (!shortcutsPinned) setShowShortcuts(false); }}
+        <svg
+          ref={svgRef}
+          className="mm-canvas"
+          data-grid={canvasGridVisible ? 'on' : 'off'}
+          onMouseDown={onMouseDownSvg}
+          onMouseMove={onMouseMoveSvg}
+          onMouseUp={onMouseUpSvg}
+          onMouseLeave={onMouseUpSvg}
+          onTouchStart={onTouchStartSvg}
+          onTouchMove={onTouchMoveSvg}
+          onTouchEnd={onTouchEndSvg}
+          onTouchCancel={onTouchEndSvg}
+          onDragOver={onDragOverSvg}
+          onDragLeave={onDragLeaveSvg}
+          onDrop={(e) => { void onDropSvg(e); }}
+          onClick={() => {
+            setShowColorPicker(false);
+            setContextMenu(null);
+            setShowIconPicker(false);
+            setShowExportMenu(false);
+            setShowToolbarOverflow(false);
+            if (!shortcutsPinned) setShowShortcuts(false);
+            if (formatSidebarOpen) setFormatSidebarTab('canvas');
+          }}
         >
-          <g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`}>
+          <g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`} style={mapStyle.defaultFontFamily ? { fontFamily: mapStyle.defaultFontFamily } : undefined}>
             <g className="mm-connections">{renderConnections(root)}</g>
             <g className="mm-nodes">{renderNodes(root)}</g>
             {rectSel && (() => {
@@ -2810,6 +3053,47 @@ export function DesktopMindMapEditor({
                 <IconTray orientation="vertical" currentIcons={selNode?.icons ?? []} onSelect={(n) => { hasBulk ? bulkSetIcon(n) : setNodeIcon(selectedId, n); }} />
               )}
             </div>
+          )}
+          {!isMobile && formatSidebarOpen && (
+            <FormatSidebar
+              selectedNode={selNode ?? null}
+              isRootChild={isRootChild}
+              activeTab={formatSidebarTab}
+              onActiveTabChange={setFormatSidebarTab}
+              layoutMode={layoutMode}
+              canvasColor={canvasColor}
+              themeMode={themeMode}
+              canvasGridVisible={canvasGridVisible}
+              mapStyle={mapStyle}
+              zoom={zoom}
+              focusMode={focusMode}
+              colourTrayEnabled={colourTrayEnabled}
+              iconTrayEnabled={iconTrayEnabled}
+              onSetFillColor={(c) => { hasBulk ? bulkSetColor(c) : setNodeColor(selectedId, c); }}
+              onSetTextColor={(c) => { hasBulk ? bulkSetTextColor(c) : setNodeTextColor(selectedId, c); }}
+              onSetFontSize={(n) => { hasBulk ? bulkSetFontSize(n) : setNodeFontSize(selectedId, n); }}
+              onSetFontWeight={(w) => { hasBulk ? bulkSetFontWeight(w) : setNodeFontWeight(selectedId, w); }}
+              onSetShape={(s) => { hasBulk ? bulkSetShape(s) : setNodeShape(selectedId, s); }}
+              onSetBorderColor={(c) => { hasBulk ? bulkSetBorderColor(c) : setNodeBorderColor(selectedId, c); }}
+              onSetEdgeColor={(c) => { hasBulk ? bulkSetEdgeColor(c) : setNodeEdgeColor(selectedId, c); }}
+              onSetEdgeWidth={(w) => { hasBulk ? bulkSetEdgeWidth(w) : setNodeEdgeWidth(selectedId, w); }}
+              onSetSide={(side) => setNodeSide(selectedId, side)}
+              onToggleIcon={(n) => { hasBulk ? bulkSetIcon(n) : setNodeIcon(selectedId, n); }}
+              onOpenIconTray={() => setIconTray(true)}
+              onSetCanvasColor={setCanvasColor}
+              onSetCanvasGridVisible={setCanvasGridVisible}
+              onSetLayoutMode={setRootLayoutMode}
+              onAutoAlign={() => autoAlignSubtree(selectedId)}
+              onApplyColorTheme={applyColorTheme}
+              onApplyRainbowBranches={applyRainbowBranches}
+              onSetMapStyle={patchMapStyle}
+              onToggleFocusMode={() => { setFocusMode((v) => { if (!v) setFocusAnchorId(selectedId); return !v; }); }}
+              onZoomIn={() => setZoom((z) => Math.min(3, z + 0.15))}
+              onZoomOut={() => setZoom((z) => Math.max(0.3, z - 0.15))}
+              onZoomReset={() => setZoom(1)}
+              onZoomFit={fitView}
+              onClose={() => setFormatSidebarOpen(false)}
+            />
           )}
         </div>
         {traysByPosition.bottom.length > 0 && (

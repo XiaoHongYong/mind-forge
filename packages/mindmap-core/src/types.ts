@@ -49,6 +49,11 @@ export interface LayoutNode<Self> {
   customY?: number;
   tags?: string[];
   image?: LayoutImage | null;
+  /**
+   * Body text size in px at hierarchy scale 1. When omitted, measuring uses
+   * `NODE_BASE_FONT_SIZE`. Drawing reads the same field so box and glyphs agree.
+   */
+  fontSize?: number | null;
 }
 
 /**

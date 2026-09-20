@@ -59,6 +59,14 @@ interface UiState {
    *  was left instead of jumping back to the corner. */
   shortcutsPos: { x: number; y: number } | null;
   setShortcutsPos: (pos: { x: number; y: number } | null) => void;
+
+  /** Right-hand Format sidebar (Style / Canvas tabs). */
+  formatSidebarOpen: boolean;
+  setFormatSidebarOpen: (open: boolean) => void;
+
+  /** Dot-grid overlay on the canvas SVG. */
+  canvasGridVisible: boolean;
+  setCanvasGridVisible: (visible: boolean) => void;
 }
 
 export const useUiStore = create<UiState>()(
@@ -122,6 +130,12 @@ export const useUiStore = create<UiState>()(
 
       shortcutsPos: null,
       setShortcutsPos: (shortcutsPos) => set({ shortcutsPos }),
+
+      formatSidebarOpen: false,
+      setFormatSidebarOpen: (formatSidebarOpen) => set({ formatSidebarOpen }),
+
+      canvasGridVisible: true,
+      setCanvasGridVisible: (canvasGridVisible) => set({ canvasGridVisible }),
     }),
     { name: 'mindforge-ui' },
   ),

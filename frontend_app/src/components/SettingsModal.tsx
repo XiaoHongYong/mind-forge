@@ -13,6 +13,7 @@ import {
   type TrayPosition,
 } from '../store/ui';
 import { isMac } from '../platform/isMac';
+import { CANVAS_COLOR_PRESETS } from './MindMapConstants';
 
 export type SettingsTab = 'changelog' | 'appearance' | 'interface' | 'help';
 
@@ -21,11 +22,7 @@ const PRESETS = [
   '#eab308', '#22c55e', '#14b8a6', '#06b6d4', '#3b82f6',
 ];
 
-/** Canvas backgrounds: a dark row and a light row, so either theme has options. */
-const CANVAS_PRESETS = [
-  '#0f172a', '#111827', '#1c1917', '#172554', '#134e4a',
-  '#f1f5f9', '#ffffff', '#fefce8', '#f5f3ff', '#ecfdf5',
-];
+const CANVAS_PRESETS = CANVAS_COLOR_PRESETS;
 
 const autosaveOptions: Array<{ value: AutosaveMode; label: string }> = [
   { value: 'change', label: 'After each change' },

@@ -20,7 +20,6 @@ import {
   CHECKBOX_SIZE,
   ICON_SIZE,
   LINK_STRIP_H,
-  NODE_LINE_H,
   NODE_PAD_X,
   PROGRESS_PIE_SIZE,
   TAG_STRIP_H,
@@ -40,6 +39,8 @@ export interface NodeVisual {
   textColor: string;
   fontSize: number;
   fontWeight: 'bold' | 'normal' | number;
+  /** Vertical advance between body text lines (matches layout measure). */
+  lineH: number;
   /** Hierarchy size multiplier from layout (`nodeScaleForDepth`). */
   scale: number;
 }
@@ -354,7 +355,7 @@ export function BodyBand({
   const checkbox = CHECKBOX_SIZE * s;
   const iconSize = ICON_SIZE * s;
   const pieSize = PROGRESS_PIE_SIZE * s;
-  const lineH = NODE_LINE_H * s;
+  const lineH = visual.lineH;
   const { hasCheckbox, hasProgress, iconCount, lines } = parts;
   const iconsX = box.x + padX + (hasCheckbox ? checkbox + 6 * s : 0) - 2 * s;
 

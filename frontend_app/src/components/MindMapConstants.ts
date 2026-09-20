@@ -42,6 +42,12 @@ export const COLOR_PALETTE: string[] = [
   '#18181b', '#3f3f46', '#71717a', '#a1a1aa', '#d4d4d8', '#e4e4e7',
 ];
 
+/** Canvas background presets (dark row then light row). */
+export const CANVAS_COLOR_PRESETS: string[] = [
+  '#0f172a', '#111827', '#1c1917', '#172554', '#134e4a',
+  '#f1f5f9', '#ffffff', '#fefce8', '#f5f3ff', '#ecfdf5',
+];
+
 /** Progress presets for node progress circles. */
 export const PROGRESS_PRESETS: number[] = [0, 25, 50, 75, 100];
 

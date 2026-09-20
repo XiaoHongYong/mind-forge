@@ -65,7 +65,11 @@ let measureContext: CanvasRenderingContext2D | null = null;
  */
 let measureUnavailable = false;
 
-export const measureText = (text: string, fontSize = 14): number => {
+export const measureText = (
+  text: string,
+  fontSize = 14,
+  fontFamily = 'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
+): number => {
   if (!measureContext && !measureUnavailable) {
     try {
       measureContext = document.createElement('canvas').getContext('2d');
@@ -76,7 +80,7 @@ export const measureText = (text: string, fontSize = 14): number => {
   }
   if (!measureContext) return (text?.length ?? 1) * fontSize * 0.6;
 
-  measureContext.font = `${fontSize}px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif`;
+  measureContext.font = `${fontSize}px ${fontFamily}`;
   return measureContext.measureText(text || ' ').width;
 };
 
@@ -132,18 +136,44 @@ export const describeNode = <N extends LayoutNode<N>>(
 
 // ── How big it has to be ────────────────────────────────────────
 
+/** Optional document-level defaults used when a node omits its own style. */
+export interface LayoutStyleDefaults {
+  fontSize?: number;
+  fontFamily?: string;
+}
+
+/** Base body font size for a node (px at hierarchy scale 1). */
+export const nodeBaseFontSize = <N extends LayoutNode<N>>(
+  node: N,
+  defaults?: LayoutStyleDefaults,
+): number => {
+  const n = node.fontSize;
+  if (typeof n === 'number' && Number.isFinite(n) && n > 0) return n;
+  const d = defaults?.fontSize;
+  if (typeof d === 'number' && Number.isFinite(d) && d > 0) return d;
+  return NODE_BASE_FONT_SIZE;
+};
+
+/** Line height that stays proportional when the node overrides font size. */
+export const nodeLineHeight = (baseFontSize: number, scale = 1): number =>
+  NODE_LINE_H * (baseFontSize / NODE_BASE_FONT_SIZE) * scale;
+
 /** How big a node has to be to hold everything `describeNode` found in it. */
 export const measureNodeSize = <N extends LayoutNode<N>>(
   node: N,
   parts: NodeParts = describeNode(node),
   scale = 1,
+  defaults?: LayoutStyleDefaults,
 ): NodeSize => {
   const s = scale;
-  const fontSize = NODE_BASE_FONT_SIZE * s;
+  const baseFont = nodeBaseFontSize(node, defaults);
+  const fontSize = baseFont * s;
+  const lineH = nodeLineHeight(baseFont, s);
+  const family = defaults?.fontFamily;
   const urlW = parts.urlCount > 0 ? 120 * s : 0;
-  const linkW = parts.link ? measureText(parts.link.label, 10 * s) + 24 * s : 0;
+  const linkW = parts.link ? measureText(parts.link.label, 10 * s, family) + 24 * s : 0;
   const maxW = Math.max(
-    ...parts.lines.map((line) => measureText(line || ' ', fontSize)),
+    ...parts.lines.map((line) => measureText(line || ' ', fontSize, family)),
     linkW,
     urlW,
   );
@@ -152,7 +182,7 @@ export const measureNodeSize = <N extends LayoutNode<N>>(
   const imageW = parts.image ? parts.image.w * s + NODE_PAD_X * 2 * s : 0;
   const bodyH = Math.max(
     NODE_MIN_H * s,
-    parts.lines.length * NODE_LINE_H * s + NODE_PAD_Y * 2 * s,
+    parts.lines.length * lineH + NODE_PAD_Y * 2 * s,
   );
   const bandsH = (parts.topMetaH + parts.topTagH + parts.imageBandH + parts.footerH) * s;
 
@@ -170,7 +200,13 @@ export const measureNodeSize = <N extends LayoutNode<N>>(
  * where does each band start. `bodyH` here is by construction the same number
  * `measureNodeSize` added the bands to.
  */
-export const nodeGeometry = (box: NodeBox, parts: NodeParts, scale = 1): NodeGeometry => {
+export const nodeGeometry = (
+  box: NodeBox,
+  parts: NodeParts,
+  scale = 1,
+  /** When set, line spacing matches a custom body font (from `nodeLineHeight`). */
+  lineH?: number,
+): NodeGeometry => {
   const s = scale;
   const topMetaH = parts.topMetaH * s;
   const topTagH = parts.topTagH * s;
@@ -180,7 +216,7 @@ export const nodeGeometry = (box: NodeBox, parts: NodeParts, scale = 1): NodeGeo
   const bodyTopY = box.y + bandsAboveBody;
   const bodyH = box.h - bandsAboveBody - footerH;
   const textX = box.x + NODE_PAD_X * s + parts.leftPad * s;
-  const lineH = NODE_LINE_H * s;
+  const resolvedLineH = lineH ?? NODE_LINE_H * s;
 
   return {
     metaCentreY: box.y + topMetaH / 2,
@@ -192,7 +228,7 @@ export const nodeGeometry = (box: NodeBox, parts: NodeParts, scale = 1): NodeGeo
     centreY: bodyTopY + bodyH / 2,
     textX,
     textCentreX: textX + (box.w - NODE_PAD_X * 2 * s - parts.leftPad * s) / 2,
-    lineStartY: bodyTopY + bodyH / 2 - ((parts.lines.length - 1) * lineH) / 2,
+    lineStartY: bodyTopY + bodyH / 2 - ((parts.lines.length - 1) * resolvedLineH) / 2,
     footerTopY: bodyTopY + bodyH,
   };
 };

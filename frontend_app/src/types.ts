@@ -23,12 +23,48 @@ export interface NodeAttachmentRef {
   inline_preview_data_base64?: string;
 }
 
+/** Outline shape for a topic bubble. */
+export type NodeShape = 'rounded' | 'rect' | 'capsule' | 'ellipse';
+
+/**
+ * Document-level map appearance defaults (saved with the file).
+ * Device preferences like canvas background stay in the theme store.
+ */
+export interface MapStyle {
+  /** Body font family for nodes without an override. */
+  defaultFontFamily?: string | null;
+  /** Body font size (px at hierarchy scale 1) when a node has no `fontSize`. */
+  defaultFontSize?: number | null;
+  /** Edge colour when a child has neither `edgeColor` nor `color`. */
+  defaultEdgeColor?: string | null;
+}
+
 export interface MindMapTreeNode {
   id: string;
   text: string;
   notes?: string;
   collapsed?: boolean;
   color?: string | null;
+  /**
+   * Body text size in px at hierarchy scale 1. When omitted, layout uses
+   * `NODE_BASE_FONT_SIZE` and depth-derived defaults.
+   */
+  fontSize?: number | null;
+  /** Explicit weight; when omitted, root/L1/deeper defaults apply. */
+  fontWeight?: 'normal' | 'bold' | null;
+  /** Explicit text colour; when omitted, coloured fills use white, else theme. */
+  textColor?: string | null;
+  /**
+   * Node outline shape. When omitted, hierarchy defaults apply
+   * (rounded rectangle with depth-scaled corner radius).
+   */
+  shape?: NodeShape | null;
+  /** Stroke colour independent of fill; selection/drop still override. */
+  borderColor?: string | null;
+  /** Colour of the edge coming into this node from its parent. */
+  edgeColor?: string | null;
+  /** Width of the edge coming into this node (px in canvas space). */
+  edgeWidth?: number | null;
   link?: NodeLink | null;
   children: MindMapTreeNode[];
   /** Lucide icon names rendered inside the node (multi-select). */
@@ -92,4 +128,6 @@ export interface MindMapTree {
      */
     layout_mode?: 'tree' | 'map';
   };
+  /** Document-level style defaults for the map. */
+  map_style?: MapStyle;
 }
