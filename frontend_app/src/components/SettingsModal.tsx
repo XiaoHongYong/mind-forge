@@ -14,7 +14,7 @@ import {
 } from '../store/ui';
 import { isMac } from '../platform/isMac';
 
-export type SettingsTab = 'account' | 'changelog' | 'appearance' | 'interface' | 'help';
+export type SettingsTab = 'changelog' | 'appearance' | 'interface' | 'help';
 
 const PRESETS = [
   '#6366f1', '#8b5cf6', '#ec4899', '#ef4444', '#f97316',
@@ -35,12 +35,6 @@ const autosaveOptions: Array<{ value: AutosaveMode; label: string }> = [
 ];
 
 const icons: Record<SettingsTab, ReactNode> = {
-  account: (
-    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-      <circle cx="12" cy="8" r="4" />
-      <path strokeLinecap="round" d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1" />
-    </svg>
-  ),
   changelog: (
     <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" />
@@ -70,7 +64,6 @@ const icons: Record<SettingsTab, ReactNode> = {
 };
 
 const tabTitles: Record<SettingsTab, string> = {
-  account: 'Account',
   changelog: "What's New",
   appearance: 'Appearance',
   interface: 'Interface',
@@ -167,26 +160,6 @@ function KeyboardLayoutPicker() {
           </>
         )}
       </p>
-    </div>
-  );
-}
-
-// ─── Account ─────────────────────────────────────────────────────────────────
-
-function AccountTab() {
-  return (
-    <div className="space-y-6">
-      <section>
-        <SectionLabel>Documents</SectionLabel>
-        <div className="rounded-xl p-4" style={{ background: 'var(--surface-2)' }}>
-          <p className="text-sm" style={{ color: 'var(--text-primary)' }}>
-            Documents are plain local files. Use File → Open / Save.
-          </p>
-          <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-            There is no account or unlock password in this build. Documents are ordinary local files.
-          </p>
-        </div>
-      </section>
     </div>
   );
 }
@@ -603,7 +576,7 @@ interface SettingsModalProps {
 }
 
 /**
- * Tabbed settings hub: Account, Appearance, Interface, What's New, Help.
+ * Tabbed settings hub: Appearance, Interface, What's New, Help.
  *
  * Everything here is device-local UI state — no profile, unlock, or vault.
  */
@@ -616,7 +589,7 @@ export function SettingsModal({ open, onClose, initialTab = 'appearance' }: Sett
   const [tab, setTab] = useState<SettingsTab>(initialTab);
   const [legalDocument, setLegalDocument] = useState<LegalDocument | null>(null);
 
-  const order: SettingsTab[] = ['account', 'appearance', 'interface', 'changelog', 'help'];
+  const order: SettingsTab[] = ['appearance', 'interface', 'changelog', 'help'];
 
   useEffect(() => {
     if (open) setTab(initialTab);
@@ -691,7 +664,6 @@ export function SettingsModal({ open, onClose, initialTab = 'appearance' }: Sett
             </header>
 
             <div className="flex-1 overflow-y-auto px-5 py-5">
-              {tab === 'account' && <AccountTab />}
               {tab === 'changelog' && <ChangelogTab />}
               {tab === 'appearance' && (
                 <AppearanceTab

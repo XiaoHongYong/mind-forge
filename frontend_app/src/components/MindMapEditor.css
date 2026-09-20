@@ -123,10 +123,9 @@
   gap: 8px;
   flex: 0 0 auto;
 }
-/* Large: nav is its own full-width row (title bar), not just sized to its
-   content — center grows to fill the space between the fixed-width left
-   and right clusters, so the title sits truly centered and Theme/Settings
-   land flush against the right edge. */
+/* Large: nav is its own full-width row, not just sized to its
+   content — the center spacer grows so Theme/Settings land flush
+   against the right edge. Document name lives in the OS window caption. */
 .mm-root[data-density="large"] .mm-toolbar-nav {
   flex: 1 0 100%;
 }
@@ -179,23 +178,6 @@
    separator there. */
 .mm-root:not([data-density="large"]) .mm-toolbar-right {
   box-shadow: none;
-}
-
-.mm-title-input {
-  background: transparent;
-  border: none;
-  outline: none;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-primary);
-  min-width: 120px;
-  max-width: 260px;
-}
-.mm-title-input:focus {
-  border-bottom: 1.5px solid var(--accent);
-}
-.mm-title-input::placeholder {
-  color: var(--mm-btn-text);
 }
 
 /* ── Save button (merged badge) ──────────────────────────────────────────── */
@@ -2341,7 +2323,6 @@
   }
   .mm-shortcuts-panel { right: 8px; width: calc(100vw - 16px); }
   .mm-statusbar-hint { display: none; }
-  .mm-title-input { max-width: 140px; }
 }
 
 @media (max-width: 480px) {

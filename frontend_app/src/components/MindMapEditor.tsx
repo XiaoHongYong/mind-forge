@@ -134,8 +134,8 @@ function toolbarGroup(label: string, children: ReactNode, ribbonTab?: string) {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 export function DesktopMindMapEditor({
-  initialTree, initialShowShortcuts, disableAutoPanToSelection, externalNodeAttachments, title, onSave, onTitleChange, saving, saveMsg, error, onBack,
-  exportFormats, onExport, titleChanged, onRenameTitle, renamingTitle,
+  initialTree, initialShowShortcuts, disableAutoPanToSelection, externalNodeAttachments, title, onSave, saving, saveMsg, error, onBack,
+  exportFormats, onExport,
   versionLabel, versionTooltip,
   onTreeChange, onSelectionChange, onNodeFileDrop, onOpenNodeAttachment,
   onFetchNodeAttachmentContent,
@@ -504,7 +504,6 @@ export function DesktopMindMapEditor({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordingChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const titleInputRef = useRef<HTMLInputElement>(null);
   const [isDirty, setIsDirty] = useState(false);
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autosaveInterval = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -1463,19 +1462,18 @@ export function DesktopMindMapEditor({
 
   // ── Autosave ──────────────────────────────────────────────────────────────
   useEffect(() => {
-    const hasUnsavedChanges = isDirty || !!titleChanged;
     if (autosaveTimer.current) { clearTimeout(autosaveTimer.current); autosaveTimer.current = null; }
     if (autosaveInterval.current) { clearInterval(autosaveInterval.current); autosaveInterval.current = null; }
-    if (!hasUnsavedChanges || saving || autosaveMode === 'never') return;
+    if (!isDirty || saving || autosaveMode === 'never') return;
 
     if (autosaveMode === 'change') {
       autosaveTimer.current = setTimeout(() => handleSave(), 1000);
       return () => { if (autosaveTimer.current) clearTimeout(autosaveTimer.current); };
     }
     const intervalMs = autosaveMode === '30s' ? 30_000 : 5 * 60_000;
-    autosaveInterval.current = setInterval(() => { if (isDirty || titleChanged) handleSave(); }, intervalMs);
+    autosaveInterval.current = setInterval(() => { if (isDirty) handleSave(); }, intervalMs);
     return () => { if (autosaveInterval.current) clearInterval(autosaveInterval.current); };
-  }, [root, title, titleChanged, autosaveMode, saving, handleSave, isDirty]);
+  }, [root, title, autosaveMode, saving, handleSave, isDirty]);
 
   // ══════════════════════════════════════════════════════════════════════════
   //  ZOOM / PAN / DRAG-AND-DROP
@@ -2354,13 +2352,7 @@ export function DesktopMindMapEditor({
             {backBtn}
             {saveBtn}
           </div>
-          <div className="mm-toolbar-center">
-            <input ref={titleInputRef} className="mm-title-input" value={title} onChange={(e) => onTitleChange(e.target.value)} placeholder="Untitled" style={{ textAlign: 'center' }} />
-            {onRenameTitle && titleChanged && (
-              <button className="mm-btn" onClick={onRenameTitle} disabled={renamingTitle} title="Rename vault (title only)"
-                style={{ padding: '0 8px', flexShrink: 0, color: 'var(--accent)', border: '1px solid var(--accent)' }}>{renamingTitle ? '…' : 'Rename'}</button>
-            )}
-          </div>
+          <div className="mm-toolbar-center" aria-hidden />
           {densityPreset === 'large' && (
             <div className="mm-toolbar-nav-end">
               {themeBtn}

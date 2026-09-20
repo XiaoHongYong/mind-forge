@@ -12,7 +12,7 @@ interface ThemePanelProps {
 
 /**
  * Settings entry point. Renders a gear button that opens the tabbed
- * {@link SettingsModal} (Account / Appearance / Interface / What's New / Help).
+ * {@link SettingsModal} (Appearance / Interface / What's New / Help).
  */
 export function ThemePanel({ initialTab = 'appearance', autoOpenWhatsNew = false, toolbarButton = false }: ThemePanelProps) {
   const [open, setOpen] = useState(false);

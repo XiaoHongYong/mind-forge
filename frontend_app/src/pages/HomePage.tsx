@@ -1,6 +1,7 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDocumentStore } from '../document';
+import { DEFAULT_WINDOW_CAPTION, setWindowCaption } from '../platform/windowCaption';
 import { isTauri } from '../storage';
 
 export function HomePage() {
@@ -12,6 +13,10 @@ export function HomePage() {
   const clearRecent = useDocumentStore((s) => s.clearRecent);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    void setWindowCaption(DEFAULT_WINDOW_CAPTION);
+  }, []);
 
   const goEditor = useCallback(() => navigate('/editor'), [navigate]);
 

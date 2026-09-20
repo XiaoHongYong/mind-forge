@@ -9,7 +9,6 @@ export interface MindMapEditorProps {
   externalNodeAttachments?: Record<string, NodeAttachmentRef[]>;
   title: string;
   onSave: (tree: MindMapTree, title: string) => Promise<void>;
-  onTitleChange: (title: string) => void;
   saving: boolean;
   saveMsg: string;
   error: string;
@@ -18,9 +17,6 @@ export interface MindMapEditorProps {
   /** The formats the export menu offers. One entry per format. */
   exportFormats?: ExportFormat[];
   onExport?: (format: ExportFormat, tree: MindMapTree, baseName: string) => void | Promise<void>;
-  titleChanged?: boolean;
-  onRenameTitle?: () => void;
-  renamingTitle?: boolean;
   versionLabel?: string;
   versionTooltip?: string;
   onTreeChange?: (tree: MindMapTree) => void;

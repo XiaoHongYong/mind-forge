@@ -4,6 +4,7 @@ import { DesktopMindMapEditor } from '../components/MindMapEditor';
 import type { LinkableFile } from '../components/MindMapFileLinkDialog';
 import { useDocumentStore } from '../document';
 import { newDocument } from '../document/io';
+import { documentWindowCaption, setWindowCaption } from '../platform/windowCaption';
 import type { MindMapTree, NodeAttachmentRef } from '../types';
 import { fromBase64, toBase64 } from '../utils/base64';
 import { createFilePreview } from '../utils/filePreview';
@@ -21,11 +22,8 @@ export function EditorPage() {
   const openViaDialog = useDocumentStore((s) => s.openViaDialog);
   const createNew = useDocumentStore((s) => s.createNew);
   const openPath = useDocumentStore((s) => s.openPath);
-  const updateTitle = useDocumentStore((s) => s.updateTitle);
-
   const [editorKey, setEditorKey] = useState(0);
   const [title, setTitle] = useState(session?.title ?? 'Untitled');
-  const [savedTitle, setSavedTitle] = useState(session?.title ?? 'Untitled');
   const [initialTree, setInitialTree] = useState<MindMapTree | null>(session?.tree ?? null);
   const [currentTree, setCurrentTree] = useState<MindMapTree | null>(session?.tree ?? null);
   const [saving, setSaving] = useState(false);
@@ -33,10 +31,15 @@ export function EditorPage() {
   const [saveMsg, setSaveMsg] = useState('');
   const previewBlobUrlCacheRef = useRef<Record<string, string>>({});
 
+  const captionLabel = session?.path ? fileName(session.path) : (title || 'Untitled');
+
+  useEffect(() => {
+    void setWindowCaption(documentWindowCaption(captionLabel));
+  }, [captionLabel]);
+
   const syncFromSession = useCallback((next = useDocumentStore.getState().session) => {
     if (!next) return;
     setTitle(next.title);
-    setSavedTitle(next.title);
     setInitialTree(next.tree);
     setCurrentTree(next.tree);
     setEditorKey((k) => k + 1);
@@ -73,7 +76,6 @@ export function EditorPage() {
     try {
       const saved = await save(tree, currentTitle || title);
       setTitle(saved.title);
-      setSavedTitle(saved.title);
       setCurrentTree(saved.tree);
       setInitialTree(saved.tree);
       setSaveMsg(saved.path ? 'Saved' : 'Downloaded');
@@ -92,7 +94,6 @@ export function EditorPage() {
     try {
       const saved = await saveAs(currentTree, title);
       setTitle(saved.title);
-      setSavedTitle(saved.title);
       setCurrentTree(saved.tree);
       setInitialTree(saved.tree);
       setSaveMsg(saved.path ? 'Saved' : 'Downloaded');
@@ -113,15 +114,6 @@ export function EditorPage() {
     const opened = await openViaDialog();
     if (opened) syncFromSession(opened);
   }, [openViaDialog, syncFromSession]);
-
-  const handleRenameTitle = useCallback(() => {
-    const next = title.trim();
-    if (!next) return;
-    updateTitle(next);
-    setSavedTitle(next);
-    setSaveMsg('Title updated');
-    setTimeout(() => setSaveMsg(''), 2000);
-  }, [title, updateTitle]);
 
   const handleExport = useCallback(async (format: ExportFormat, tree: MindMapTree, baseName: string) => {
     const blob = await format.serialize(tree.root, baseName);
@@ -234,17 +226,10 @@ export function EditorPage() {
         onSaveAsDocument={() => { void handleSaveAs(); }}
         initialTree={initialTree}
         title={title}
-        onTitleChange={(next) => {
-          setTitle(next);
-          updateTitle(next);
-        }}
         onSave={handleSave}
         saving={saving}
         saveMsg={saveMsg}
         error={error}
-        titleChanged={title.trim() !== savedTitle}
-        onRenameTitle={handleRenameTitle}
-        renamingTitle={false}
         onBack={() => navigate('/')}
         exportFormats={EXPORT_FORMATS}
         onExport={handleExport}
