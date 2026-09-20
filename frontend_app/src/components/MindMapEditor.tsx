@@ -1,0 +1,3436 @@
+/**
+ * MindMapEditor — full-featured SVG mind map editor.
+ *
+ * Ported features from the dashboard (minus PVS entity links and sharing):
+ * • Checkboxes (tri-state: null / false / true)           C key
+ * • Progress pie (inline 32 px diameter)                    P key
+ * • Drag-and-drop (free-drag + reparent)
+ * • Left / right child layout from root                     Shift+Tab
+ * • Extended 54-swatch colour palette
+ * • Date planning (start / end)                             D key
+ * • Custom URLs per node                                    U key
+ * • Move up / down siblings
+ * • Duplicate node
+ * • Search bar                                              Ctrl+F
+ * • Reset node position                                     R key
+ * • All existing features preserved
+ */
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import type { JSX, ReactNode } from 'react';
+import DOMPurify from 'dompurify';
+import { marked } from 'marked';
+import type { MindMapTree, MindMapTreeNode, NodeAttachmentRef, UrlEntry } from '../types';
+import { useThemeStore } from '../store/theme';
+import { ThemePanel } from './ThemePanel';
+import { MindMapIconPicker } from './MindMapIconPicker.tsx';
+import { MindMapColorPicker } from './MindMapColorPicker';
+import { MindMapDateDialog } from './MindMapDateDialog';
+import { MindMapNotesDialog } from './MindMapNotesDialog';
+import { MindMapFileLinkDialog, type LinkableFile } from './MindMapFileLinkDialog';
+import type { NoteEditorHandle } from './notes/NoteEditor';
+import { normalizeBareTasks, toggleTaskAtIndex } from './notes/markdownEditing';
+import { useUserLabels } from '../hooks/useUserLabels';
+import type { MindMapEditorProps } from './MindMapEditor.types';
+import {
+  NODE_COLORS,
+  PROGRESS_PRESETS,
+} from './MindMapConstants';
+import {
+  cloneTree,
+  findNode,
+  countChecked,
+  flattenTree,
+  flattenAll,
+  defaultRoot,
+  migrateNode,
+} from './MindMapHelpers';
+import { layoutTree, bezierPath, describeNode, nodeGeometry } from '@mindforge/mindmap-core';
+import { appendAttachmentMarkdownLinks, getVisibleNodeTextLines } from '../utils/nodeAttachments';
+import { exportSvgAsPdf, renderSvgToCanvas } from '../utils/pdfExport';
+import { downloadBlob, downloadDataUrl } from '../utils/download';
+import { handleDelegatedLinkClick } from '../utils/openExternal';
+import { createNodeImageGlyph, type NodeImageGlyph } from '../utils/filePreview';
+import { buildExportFileBaseName as buildExportName } from '../utils/exportFileName';
+import {
+  BodyBand,
+  CollapseControls,
+  DateBadge,
+  FooterBand,
+  ImageBand,
+  MetaBand,
+  TagBand,
+  type BodyActions,
+  type NodeVisual,
+} from './mindmap/NodeBands';
+import {
+  addChild as addChildOp,
+  addSibling as addSiblingOp,
+  addUrl,
+  cloneSubtreeWithNewIds,
+  editNode,
+  editNodes,
+  insertAfter,
+  moveSibling,
+  nextInCycle,
+  removeNode as removeNodeOp,
+  removeNodes,
+  removeUrl,
+  reparentNode as reparentNodeOp,
+  resetPositions,
+  toggleChecked,
+  toggleIcon,
+} from './mindmap/treeOps';
+import { useMindMapHistory } from './mindmap/useMindMapHistory';
+import {
+  dragDelta,
+  findDropTarget,
+  marqueeBounds,
+  nodesInMarquee,
+  passedDragThreshold,
+} from './mindmap/dragSelection';
+
+/** null closes the cycle: 0 → 25 → 50 → 75 → 100 → no dial → 0. */
+const PROGRESS_CYCLE: (number | null)[] = [...PROGRESS_PRESETS, null];
+import { useEffectiveKeyboardLayout, useUiStore, useResolvedDensity, type TrayPosition } from '../store/ui';
+import { ColorTray } from './ColorTray';
+import { IconTray } from './IconTray';
+import { matchShortcut, formatShortcut, formatButtonShortcut, SHORTCUTS } from '../shortcuts/registry';
+import { isMac } from '../platform/isMac';
+import './MindMapEditor.css';
+
+// ── Drag state ────────────────────────────────────────────────────────────────
+interface DragState {
+  nodeId: string;
+  startClientX: number;
+  startClientY: number;
+  origX: number;
+  origY: number;
+  currentX: number;
+  currentY: number;
+  moved: boolean;
+}
+
+// A captioned cluster of toolbar buttons — Standard density merges some of
+// these together (Content+Files, Arrange+Find, Appearance+Settings) that
+// Large's ribbon tabs keep separate, so the two densities build different
+// group boundaries around the same button elements rather than sharing one
+// fixed layout.
+function toolbarGroup(label: string, children: ReactNode, ribbonTab?: string) {
+  return (
+    <div className="mm-toolbar-group" data-ribbon-tab={ribbonTab}>
+      <span className="mm-toolbar-group-label">{label}</span>
+      <div className="mm-toolbar-group-btns">{children}</div>
+    </div>
+  );
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
+export function DesktopMindMapEditor({
+  initialTree, initialShowShortcuts, disableAutoPanToSelection, externalNodeAttachments, title, onSave, onTitleChange, saving, saveMsg, error, onBack,
+  exportFormats, onExport, titleChanged, onRenameTitle, renamingTitle,
+  versionLabel, versionTooltip,
+  onTreeChange, onSelectionChange, onNodeFileDrop, onOpenNodeAttachment,
+  onFetchNodeAttachmentContent,
+  onDeleteNodeAttachment,
+  onLoadNodeAttachmentPreview,
+  documentPath, linkableFiles, linkableFilesLoading, onRequestLinkableFiles, onOpenFileLink,
+  onNewDocument, onOpenDocument, onSaveAsDocument,
+}: MindMapEditorProps) {
+  const autosaveMode = useThemeStore((s) => s.autosaveMode);
+  const themeMode = useThemeStore((s) => s.mode);
+  const toggleThemeMode = useThemeStore((s) => s.toggleMode);
+  const keyboardLayout = useEffectiveKeyboardLayout();
+  const densityPreset = useUiStore((s) => s.densityPreset);
+  const setDensityPreset = useUiStore((s) => s.setDensityPreset);
+  const setStatusBarOverride = useUiStore((s) => s.setStatusBarOverride);
+  const { statusBarVisible, toolbarLabels, buttonShortcuts: buttonShortcutsVisible, toolbarMode } = useResolvedDensity();
+  const [showToolbarOverflow, setShowToolbarOverflow] = useState(false);
+  const [activeRibbonTab, setActiveRibbonTab] = useState<'home' | 'insert' | 'view' | 'export'>('home');
+  /** The node whose vault link is being picked, or null when the dialog is shut. */
+  const [linkTargetNodeId, setLinkTargetNodeId] = useState<string | null>(null);
+  const colourTrayEnabled = useUiStore((s) => s.colourTrayEnabled);
+  const colourTrayPosition = useUiStore((s) => s.colourTrayPosition);
+  const setColourTray = useUiStore((s) => s.setColourTray);
+  const iconTrayEnabled = useUiStore((s) => s.iconTrayEnabled);
+  const iconTrayPosition = useUiStore((s) => s.iconTrayPosition);
+  const setIconTray = useUiStore((s) => s.setIconTray);
+  const shortcutsPinned = useUiStore((s) => s.shortcutsPinned);
+  const setShortcutsPinned = useUiStore((s) => s.setShortcutsPinned);
+  const shortcutsPos = useUiStore((s) => s.shortcutsPos);
+  const setShortcutsPos = useUiStore((s) => s.setShortcutsPos);
+
+  // ── Mobile detection ───────────────────────────────────────────────────────
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 768px)');
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+  const [mobilePropsOpen, setMobilePropsOpen] = useState(false);
+  const [mobileDeleteConfirm, setMobileDeleteConfirm] = useState(false);
+  const [mobileEditTextOpen, setMobileEditTextOpen] = useState(false);
+  const [mobileEditTextValue, setMobileEditTextValue] = useState('');
+
+  // ── Core state ─────────────────────────────────────────────────────────────
+  const [root, setRoot] = useState<MindMapTreeNode>(() =>
+    migrateNode(initialTree?.root ?? defaultRoot()),
+  );
+  const [selectedId, setSelectedId] = useState<string>(() => initialTree?.view_state?.selected_node_id ?? 'root');
+  const [multiSelect, setMultiSelect] = useState<Set<string>>(new Set());
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState('');
+
+  // ── Rectangle selection ────────────────────────────────────────────────
+  const [rectSel, setRectSel] = useState<{ startX: number; startY: number; curX: number; curY: number } | null>(null);
+
+  // ── Notes ──────────────────────────────────────────────────────────────────
+  const [notesOpen, setNotesOpen] = useState(false);
+  const [notesText, setNotesText] = useState('');
+  const [hoveredNoteNodeId, setHoveredNoteNodeId] = useState<string | null>(null);
+  const [hoveringNotePopup, setHoveringNotePopup] = useState(false);
+  const [notesDropActive, setNotesDropActive] = useState(false);
+  const [notesUploadBusy, setNotesUploadBusy] = useState(false);
+  const [attachmentPreviewOpen, setAttachmentPreviewOpen] = useState(false);
+  const [attachmentPreviewTitle, setAttachmentPreviewTitle] = useState('');
+  const [attachmentPreviewUrl, setAttachmentPreviewUrl] = useState<string | null>(null);
+  const [attachmentPreviewType, setAttachmentPreviewType] = useState<'image' | 'pdf' | 'audio' | 'unsupported'>('unsupported');
+  const [attachmentPreviewContentType, setAttachmentPreviewContentType] = useState<string>('');
+  const [attachmentPreviewBusy, setAttachmentPreviewBusy] = useState(false);
+
+  // ── View ───────────────────────────────────────────────────────────────────
+  const [zoom, setZoom] = useState(() => {
+    const raw = initialTree?.view_state?.zoom;
+    if (typeof raw !== 'number' || !Number.isFinite(raw)) return 1;
+    return Math.min(3, Math.max(0.3, raw));
+  });
+  const [pan, setPan] = useState(() => {
+    const panX = initialTree?.view_state?.pan_x;
+    const panY = initialTree?.view_state?.pan_y;
+    return {
+      x: typeof panX === 'number' && Number.isFinite(panX) ? panX : 160,
+      y: typeof panY === 'number' && Number.isFinite(panY) ? panY : 300,
+    };
+  });
+  const isPanning = useRef(false);
+  const lastPan = useRef({ x: 0, y: 0 });
+  const skipNextAutoPan = useRef(false);
+
+  // ── UI toggles ─────────────────────────────────────────────────────────────
+  // "Always on" wins over the host's initial hint: a card the user pinned has
+  // to come back on the next mount, including in the demos that pass false.
+  const [showShortcuts, setShowShortcuts] = useState(
+    () => useUiStore.getState().shortcutsPinned || Boolean(initialShowShortcuts),
+  );
+  const scDragRef = useRef<{
+    /** Grab point inside the panel. */
+    offsetX: number; offsetY: number;
+    /** Offset-parent origin, so viewport coords can be converted to the
+     *  `left`/`top` the absolutely-positioned panel actually needs. */
+    originX: number; originY: number;
+    /** Bounds to keep the panel inside its (overflow-hidden) parent. */
+    maxX: number; maxY: number;
+  } | null>(null);
+  const [showColorPicker, setShowColorPicker] = useState(false);
+  const [showIconPicker, setShowIconPicker] = useState(false);
+  const [showDateDialog, setShowDateDialog] = useState(false);
+  const [showUrlDialog, setShowUrlDialog] = useState(false);
+  const [rootLeftCollapsed, setRootLeftCollapsed] = useState(false);
+  const [rootRightCollapsed, setRootRightCollapsed] = useState(false);
+  const [focusMode, setFocusMode] = useState(() => Boolean(initialTree?.view_state?.focus_mode));
+  const [focusAnchorId, setFocusAnchorId] = useState<string | null>(() => initialTree?.view_state?.focus_anchor_id ?? null);
+  const [urlDraft, setUrlDraft] = useState<UrlEntry>({ url: '', label: '' });
+
+  // ── Search ─────────────────────────────────────────────────────────────────
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<string[]>([]);
+  const [searchIdx, setSearchIdx] = useState(0);
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  // ── Export menu ────────────────────────────────────────────────────────────
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
+  const [exportMenuMaxH, setExportMenuMaxH] = useState<number | null>(null);
+  const [exportMenuAlign, setExportMenuAlign] = useState<'left' | 'right'>('right');
+
+  // Where the Export button lands moves with the density — the Large ribbon
+  // puts it low and hard against the left edge, the Lean icon row high and to
+  // the right — so both the room below it and the side it can open towards
+  // have to be measured rather than guessed at in CSS.
+  useLayoutEffect(() => {
+    if (!showExportMenu) { setExportMenuMaxH(null); setExportMenuAlign('right'); return; }
+    const measure = () => {
+      const el = exportMenuRef.current;
+      const anchor = el?.parentElement;
+      if (!el || !anchor) return;
+      const MARGIN = 8;
+      setExportMenuMaxH(Math.max(120, window.innerHeight - el.getBoundingClientRect().top - 12));
+      // Right-aligned by default so it tucks under the toolbar's edge; flip to
+      // left-aligned only when that would hang the menu off the left of the
+      // window and opening rightwards actually fits.
+      const anchorRect = anchor.getBoundingClientRect();
+      const width = el.offsetWidth;
+      const overflowsLeft = anchorRect.right - width < MARGIN;
+      const rightwardsFits = anchorRect.left + width <= window.innerWidth - MARGIN;
+      setExportMenuAlign(overflowsLeft && rightwardsFits ? 'left' : 'right');
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [showExportMenu]);
+
+  // ── Voice recording ────────────────────────────────────────────────────────
+  const [mobileRecordingOpen, setMobileRecordingOpen] = useState(false);
+  const [recordingState, setRecordingState] = useState<'idle' | 'recording' | 'recorded'>('idle');
+  const [recordingBlob, setRecordingBlob] = useState<Blob | null>(null);
+  const [recordingName, setRecordingName] = useState('');
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+
+  // ── Tag dialog ─────────────────────────────────────────────────────────────
+  const [showTagDialog, setShowTagDialog] = useState(false);
+  const [tagInputValue, setTagInputValue] = useState('');
+  const [tagInputColor, setTagInputColor] = useState('#7c3aed');
+  const {
+    labels: userLabels,
+    addLabel: addUserLabel,
+    removeLabel: removeUserLabel,
+    updateLabelColor,
+  } = useUserLabels();
+
+  // ── Context menu ───────────────────────────────────────────────────────────
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
+  const [contextMenuPos, setContextMenuPos] = useState<{ left: number; top: number } | null>(null);
+
+  // The menu is long and the right-click can land anywhere, so the raw click
+  // point routinely pushes its bottom half past the window edge. Measure it
+  // once it is up and pull it back inside — shifting it up or left rather than
+  // letting the entries fall off; a menu taller than the window itself is
+  // capped by `max-height` in the CSS and scrolls.
+  useLayoutEffect(() => {
+    if (!contextMenu) { setContextMenuPos(null); return; }
+    const el = contextMenuRef.current;
+    if (!el) return;
+    const MARGIN = 8;
+    const { width, height } = el.getBoundingClientRect();
+    setContextMenuPos({
+      left: Math.max(MARGIN, Math.min(contextMenu.x, window.innerWidth - width - MARGIN)),
+      top: Math.max(MARGIN, Math.min(contextMenu.y, window.innerHeight - height - MARGIN)),
+    });
+  }, [contextMenu]);
+
+  // ── Drag-and-drop ──────────────────────────────────────────────────────────
+  const [isDragging, setIsDragging] = useState(false);
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  const [fileDropBusyNodeId, setFileDropBusyNodeId] = useState<string | null>(null);
+  const [nodeImageBusy, setNodeImageBusy] = useState(false);
+  const dragRef = useRef<DragState | null>(null);
+  const hoverPopupCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hoverPopupRef = useRef<HTMLDivElement>(null);
+  const [attachmentPreviewUrls, setAttachmentPreviewUrls] = useState<Record<string, string>>({});
+  const attachmentPreviewUrlsRef = useRef<Record<string, string>>({});
+  const attachmentPreviewPending = useRef<Set<string>>(new Set());
+  const attachmentPreviewFailed = useRef<Set<string>>(new Set());
+  const attachmentById = useMemo(() => {
+    const map = new Map<string, NodeAttachmentRef>();
+    for (const node of flattenAll(root)) {
+      for (const attachment of node.attachments ?? []) {
+        map.set(attachment.attachment_id, attachment);
+      }
+    }
+    for (const refs of Object.values(externalNodeAttachments ?? {})) {
+      for (const attachment of refs) {
+        map.set(attachment.attachment_id, {
+          ...map.get(attachment.attachment_id),
+          ...attachment,
+        });
+      }
+    }
+    return map;
+  }, [externalNodeAttachments, root]);
+  /**
+   * Markdown → sanitized HTML for the read-mode pane and the hover popup.
+   *
+   * `interactive` is what separates the two: marked renders GFM task lists as
+   * disabled checkboxes, which is right for a hover preview and wrong for the
+   * note you are reading. When set, the boxes are enabled and numbered so a
+   * click can be mapped back to the nth task in the source.
+   */
+  const renderNotesPreviewHtml = useCallback((markdown: string, interactive = false) => {
+    const attachmentMap = attachmentById;
+    const attachmentByName = new Map<string, NodeAttachmentRef>();
+    for (const attachment of attachmentMap.values()) {
+      const key = (attachment.name ?? '').trim().toLowerCase();
+      if (!key) continue;
+      const existing = attachmentByName.get(key);
+      if (!existing || existing.uploaded_at < attachment.uploaded_at) {
+        attachmentByName.set(key, attachment);
+      }
+    }
+
+    const resolveAttachment = (attachmentId: string, fallbackLabel?: string): NodeAttachmentRef | undefined => {
+      const direct = attachmentMap.get(attachmentId);
+      if (direct) return direct;
+      const normalizedFallback = (fallbackLabel ?? '')
+        .replace(/^Attachment:\s*/i, '')
+        .trim()
+        .toLowerCase();
+      if (!normalizedFallback) return undefined;
+      return attachmentByName.get(normalizedFallback);
+    };
+
+    const isImageAttachment = (attachment: NodeAttachmentRef | undefined): boolean => {
+      if (!attachment) return false;
+      return attachment.preview_kind === 'image'
+        || (attachment.preview_content_type ?? '').startsWith('image/')
+        || (attachment.content_type ?? '').startsWith('image/');
+    };
+    const raw = marked.parse(normalizeBareTasks(markdown), { async: false }) as string;
+    const container = document.createElement('div');
+    container.innerHTML = raw;
+    const anchors = container.querySelectorAll<HTMLAnchorElement>('a[href^="attachment://"]');
+    anchors.forEach((anchor) => {
+      const href = anchor.getAttribute('href') ?? '';
+      const attachmentId = href.replace(/^attachment:\/\//, '');
+      const attachment = resolveAttachment(attachmentId, anchor.textContent ?? undefined);
+      if (attachment && attachment.attachment_id !== attachmentId) {
+        anchor.setAttribute('href', `attachment://${attachment.attachment_id}`);
+      }
+      const previewUrl = attachment ? attachmentPreviewUrls[attachment.attachment_id] : undefined;
+      if (isImageAttachment(attachment) && previewUrl) {
+        const wrap = document.createElement('div');
+        wrap.className = 'mm-notes-inline-image-wrap';
+        const img = document.createElement('img');
+        img.className = 'mm-notes-inline-image';
+        img.src = previewUrl;
+        img.alt = attachment?.name || attachmentId;
+        wrap.appendChild(img);
+        anchor.replaceWith(wrap);
+        return;
+      }
+      anchor.classList.add('mm-notes-attachment-link');
+      if (!attachment) {
+        anchor.classList.add('is-missing');
+      }
+    });
+    const images = container.querySelectorAll<HTMLImageElement>('img[src^="attachment://"]');
+    images.forEach((image) => {
+      const src = image.getAttribute('src') ?? '';
+      const attachmentId = src.replace(/^attachment:\/\//, '');
+      const attachment = resolveAttachment(attachmentId, image.getAttribute('alt') ?? undefined);
+      if (attachment && attachment.attachment_id !== attachmentId) {
+        image.setAttribute('src', `attachment://${attachment.attachment_id}`);
+      }
+      const previewUrl = attachment ? attachmentPreviewUrls[attachment.attachment_id] : undefined;
+      if (isImageAttachment(attachment) && previewUrl) {
+        image.classList.add('mm-notes-inline-image');
+        image.src = previewUrl;
+        return;
+      }
+      const fallback = document.createElement('div');
+      fallback.className = 'mm-notes-inline-image-fallback';
+      fallback.textContent = attachment?.name ? `Image preview unavailable: ${attachment.name}` : 'Image preview unavailable';
+      image.replaceWith(fallback);
+    });
+    if (interactive) {
+      container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach((box, taskIndex) => {
+        box.removeAttribute('disabled');
+        box.classList.add('mm-notes-task');
+        box.setAttribute('data-task-index', String(taskIndex));
+        // Tagged on the <li> rather than matched with :has() so the bullet
+        // is dropped by a plain class selector.
+        box.closest('li')?.classList.add('mm-notes-task-item');
+      });
+    }
+    return DOMPurify.sanitize(container.innerHTML, {
+      ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel|blob|data|attachment):|[^a-z]|[a-z+.-]+(?:[^a-z+.-:]|$))/i,
+    });
+  }, [attachmentById, attachmentPreviewUrls]);
+
+  const notesPreviewHtml = useMemo(() => renderNotesPreviewHtml(notesText, true), [notesText, renderNotesPreviewHtml]);
+
+  /**
+   * Maps a markdown image target to something the DOM can render. Notes store
+   * attachments as `attachment://<id>`; the blob URL lives in
+   * `attachmentPreviewUrls`. Anything else (http(s), data:) passes through.
+   */
+  const resolveNotesImageUrl = useCallback((url: string): string | undefined => {
+    if (!url.startsWith('attachment://')) return url;
+    const id = url.slice('attachment://'.length);
+    return attachmentPreviewUrls[id];
+  }, [attachmentPreviewUrls]);
+
+  // ── Toast ──────────────────────────────────────────────────────────────────
+  const [shortcutToast, setShortcutToast] = useState<string | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showToast = useCallback((label: string) => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setShortcutToast(label);
+    toastTimer.current = setTimeout(() => setShortcutToast(null), 1600);
+  }, []);
+
+  // ── History (undo/redo) ────────────────────────────────────────────────────
+  const history = useMindMapHistory(
+    migrateNode(initialTree?.root ?? defaultRoot()),
+    useCallback((restored: MindMapTreeNode) => { setRoot(restored); setIsDirty(true); }, []),
+  );
+
+  // ── Refs ───────────────────────────────────────────────────────────────────
+  const svgRef = useRef<SVGSVGElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const editRef = useRef<HTMLTextAreaElement>(null);
+  const notesRef = useRef<NoteEditorHandle>(null);
+  // Node whose notes are open; also the CodeMirror doc identity.
+  const [notesNodeId, setNotesNodeId] = useState<string>('root');
+  const [notesSeed, setNotesSeed] = useState('');
+  const [notesSaveState, setNotesSaveState] = useState<'saved' | 'saving'>('saved');
+  const notesAttachmentInputRef = useRef<HTMLInputElement>(null);
+  const nodeAttachmentInputRef = useRef<HTMLInputElement>(null);
+  const nodeImageInputRef = useRef<HTMLInputElement>(null);
+  // The picker is shared, so the node it was opened for has to outlive the
+  // click — the context menu that opened it is gone by the time a file arrives.
+  const nodeImageTargetRef = useRef<string | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordingChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const titleInputRef = useRef<HTMLInputElement>(null);
+  const [isDirty, setIsDirty] = useState(false);
+  const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autosaveInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ── Sync initialTree ──────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!initialTree) return;
+    const r = migrateNode(initialTree.root);
+    const savedView = initialTree.view_state;
+    const savedSelectedId = savedView?.selected_node_id;
+    const nextSelectedId = savedSelectedId && findNode(r, savedSelectedId) ? savedSelectedId : 'root';
+    const savedFocusAnchor = savedView?.focus_anchor_id;
+    const nextFocusAnchor = savedFocusAnchor && findNode(r, savedFocusAnchor) ? savedFocusAnchor : null;
+
+    setRoot(r);
+    setRootLeftCollapsed(false);
+    setRootRightCollapsed(false);
+    history.reset(r);
+    setSelectedId(nextSelectedId);
+    const nextPanX = typeof savedView?.pan_x === 'number' && Number.isFinite(savedView.pan_x) ? savedView.pan_x : 160;
+    const nextPanY = typeof savedView?.pan_y === 'number' && Number.isFinite(savedView.pan_y) ? savedView.pan_y : 300;
+    const nextZoom = typeof savedView?.zoom === 'number' && Number.isFinite(savedView.zoom)
+      ? Math.min(3, Math.max(0.3, savedView.zoom))
+      : 1;
+    setPan({ x: nextPanX, y: nextPanY });
+    setZoom(nextZoom);
+    setFocusMode(Boolean(savedView?.focus_mode));
+    setFocusAnchorId(nextFocusAnchor);
+    skipNextAutoPan.current = true;
+    setIsDirty(false);
+  }, [initialTree]);
+
+  useEffect(() => {
+    if (!onTreeChange) return;
+    onTreeChange(currentTreeSnapshot());
+    // currentTreeSnapshot is read when the effect runs, not while rendering,
+    // so it stays out of the deps: adding it would fire on every pan and zoom.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onTreeChange, root]);
+
+  useEffect(() => {
+    onSelectionChange?.(selectedId);
+  }, [onSelectionChange, selectedId]);
+
+  useEffect(() => {
+    attachmentPreviewUrlsRef.current = attachmentPreviewUrls;
+  }, [attachmentPreviewUrls]);
+
+  useEffect(() => {
+    return () => {
+      if (attachmentPreviewUrl) URL.revokeObjectURL(attachmentPreviewUrl);
+    };
+  }, [attachmentPreviewUrl]);
+
+  const closeAttachmentPreview = useCallback(() => {
+    setAttachmentPreviewOpen(false);
+    setAttachmentPreviewBusy(false);
+    setAttachmentPreviewTitle('');
+    setAttachmentPreviewType('unsupported');
+    setAttachmentPreviewContentType('');
+    setAttachmentPreviewUrl((current) => {
+      if (current) URL.revokeObjectURL(current);
+      return null;
+    });
+  }, []);
+
+  const previewOrOpenAttachment = useCallback(async (attachment: NodeAttachmentRef) => {
+    const contentType = (attachment.content_type || '').toLowerCase();
+    const isImage = contentType.startsWith('image/');
+    const isPdf = contentType === 'application/pdf' || attachment.name.toLowerCase().endsWith('.pdf');
+    const isAudio = contentType.startsWith('audio/') || /\.(webm|m4a|mp3|ogg|wav|aac|flac|opus)$/i.test(attachment.name);
+
+    if (!isImage && !isPdf && !isAudio) {
+      await onOpenNodeAttachment?.(attachment);
+      return;
+    }
+
+    if (!onFetchNodeAttachmentContent) {
+      await onOpenNodeAttachment?.(attachment);
+      return;
+    }
+
+    setAttachmentPreviewBusy(true);
+    setAttachmentPreviewOpen(true);
+    setAttachmentPreviewTitle(attachment.name || 'Attachment preview');
+    setAttachmentPreviewType(isPdf ? 'pdf' : isAudio ? 'audio' : 'image');
+    setAttachmentPreviewContentType(attachment.content_type || 'application/octet-stream');
+
+    const content = await onFetchNodeAttachmentContent(attachment);
+    if (!content) {
+      setAttachmentPreviewBusy(false);
+      await onOpenNodeAttachment?.(attachment);
+      return;
+    }
+
+    const url = URL.createObjectURL(content.blob);
+    setAttachmentPreviewContentType(content.contentType || attachment.content_type || 'application/octet-stream');
+    setAttachmentPreviewTitle(content.name || attachment.name);
+    setAttachmentPreviewUrl((current) => {
+      if (current) URL.revokeObjectURL(current);
+      return url;
+    });
+    setAttachmentPreviewBusy(false);
+  }, [onFetchNodeAttachmentContent, onOpenNodeAttachment]);
+
+  useEffect(() => () => {
+    Object.values(attachmentPreviewUrlsRef.current).forEach((url) => URL.revokeObjectURL(url));
+  }, []);
+
+  useEffect(() => () => {
+    if (hoverPopupCloseTimerRef.current) {
+      clearTimeout(hoverPopupCloseTimerRef.current);
+    }
+  }, []);
+
+  const getNodeAttachments = useCallback((nodeId: string, inlineAttachments?: NodeAttachmentRef[]) => {
+    const inline = inlineAttachments ?? [];
+    const external = externalNodeAttachments?.[nodeId] ?? [];
+    if (inline.length === 0) return external;
+    if (external.length === 0) return inline;
+
+    const merged = new Map<string, NodeAttachmentRef>();
+    for (const attachment of external) merged.set(attachment.attachment_id, attachment);
+    for (const attachment of inline) {
+      merged.set(attachment.attachment_id, {
+        ...merged.get(attachment.attachment_id),
+        ...attachment,
+      });
+    }
+    return Array.from(merged.values()).sort((left, right) => right.uploaded_at.localeCompare(left.uploaded_at));
+  }, [externalNodeAttachments]);
+
+  // ── Layout ────────────────────────────────────────────────────────────────
+  /**
+   * The editor knows more about a node's attachments than the node does: some
+   * arrive through `externalNodeAttachments` rather than inside the tree. The
+   * layout has to measure with the same count the renderer draws with, or the
+   * meta strip is drawn in space nothing reserved and the text loses 18px.
+   */
+  const layout = useMemo(
+    () => layoutTree(root, 0, 0, (node) =>
+      describeNode(node, { attachmentCount: getNodeAttachments(node.id, node.attachments).length })),
+    [root, getNodeAttachments],
+  );
+
+  const loadAttachmentPreview = useCallback(async (attachment: NodeAttachmentRef) => {
+    const isImage = (attachment.content_type ?? '').startsWith('image/');
+    // Images can be previewed from their own attachment_id; non-images need a
+    // separately generated preview_attachment_id.
+    if (!isImage && !attachment.preview_attachment_id) return;
+    if (!onLoadNodeAttachmentPreview) return;
+    if (attachmentPreviewUrlsRef.current[attachment.attachment_id]) return;
+    if (attachmentPreviewPending.current.has(attachment.attachment_id)) return;
+    if (attachmentPreviewFailed.current.has(attachment.attachment_id)) return;
+
+    attachmentPreviewPending.current.add(attachment.attachment_id);
+    try {
+      const previewUrl = await onLoadNodeAttachmentPreview(attachment);
+      if (!previewUrl) {
+        attachmentPreviewFailed.current.add(attachment.attachment_id);
+        return;
+      }
+      setAttachmentPreviewUrls((current) => {
+        if (current[attachment.attachment_id] === previewUrl) return current;
+        return { ...current, [attachment.attachment_id]: previewUrl };
+      });
+    } finally {
+      attachmentPreviewPending.current.delete(attachment.attachment_id);
+    }
+  }, [onLoadNodeAttachmentPreview]);
+
+  useEffect(() => {
+    if (!onLoadNodeAttachmentPreview) return;
+    for (const attachment of attachmentById.values()) {
+      const isImage = (attachment.content_type ?? '').startsWith('image/');
+      if (!isImage && !attachment.preview_attachment_id) continue;
+      void loadAttachmentPreview(attachment);
+    }
+  }, [attachmentById, loadAttachmentPreview, onLoadNodeAttachmentPreview]);
+
+  const mutate = useCallback((newRoot: MindMapTreeNode) => {
+    setRoot(newRoot);
+    history.push(newRoot);
+    setIsDirty(true);
+  }, [history]);
+
+  const { undo, redo } = history;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  TREE MUTATIONS
+  // ══════════════════════════════════════════════════════════════════════════
+
+  const addChild = useCallback((parentId: string, side?: 'left' | 'right') => {
+    const inserted = addChildOp(root, parentId, side);
+    if (!inserted) return;
+    if (inserted.side === 'left') setRootLeftCollapsed(false);
+    if (inserted.side === 'right') setRootRightCollapsed(false);
+    mutate(inserted.root);
+    setTimeout(() => { setSelectedId(inserted.node.id); startEditing(inserted.node); }, 30);
+  }, [root, mutate]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  const addSibling = useCallback((nodeId: string) => {
+    const inserted = addSiblingOp(root, nodeId);
+    if (!inserted) return;
+    if (inserted.side === 'left') setRootLeftCollapsed(false);
+    if (inserted.side === 'right') setRootRightCollapsed(false);
+    mutate(inserted.root);
+    setTimeout(() => { setSelectedId(inserted.node.id); startEditing(inserted.node); }, 30);
+  }, [root, mutate]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  const deleteNode = useCallback((nodeId: string) => {
+    const removed = removeNodeOp(root, nodeId);
+    if (!removed) return;
+    setSelectedId(removed.parentId);
+    mutate(removed.root);
+  }, [root, mutate]);
+
+  const toggleCollapse = useCallback((nodeId: string) => {
+    const next = editNode(root, nodeId, (node) => {
+      if (node.children.length === 0) return false;
+      node.collapsed = !node.collapsed;
+    });
+    if (next) mutate(next);
+  }, [root, mutate]);
+
+  // ── Node color ────────────────────────────────────────────────────────────
+  const setNodeColor = useCallback((nodeId: string, color: string | null) => {
+    const next = editNode(root, nodeId, (node) => { node.color = color; });
+    if (next) mutate(next);
+  }, [root, mutate]);
+
+  // ── Checkbox ──────────────────────────────────────────────────────────────
+  const toggleCheckbox = useCallback((nodeId: string) => {
+    const next = editNode(root, nodeId, (node) => { node.checked = toggleChecked(node.checked); });
+    if (next) mutate(next);
+  }, [root, mutate]);
+
+  const addCheckbox = useCallback((nodeId: string) => {
+    const next = editNode(root, nodeId, (node) => { node.checked = false; });
+    if (next) mutate(next);
+  }, [root, mutate]);
+
+  const removeCheckbox = useCallback((nodeId: string) => {
+    const next = editNode(root, nodeId, (node) => { node.checked = null; });
+    if (next) mutate(next);
+  }, [root, mutate]);
+
+  // ── Progress ──────────────────────────────────────────────────────────────
+  const setNodeProgress = useCallback((nodeId: string, value: number | null) => {
+    const next = editNode(root, nodeId, (node) => { node.progress = value; });
+    if (next) mutate(next);
+  }, [root, mutate]);
+
+  const cycleProgress = useCallback((nodeId: string) => {
+    const found = findNode(root, nodeId);
+    if (!found) return;
+    setNodeProgress(nodeId, nextInCycle(PROGRESS_CYCLE, found.node.progress ?? null));
+  }, [root, setNodeProgress]);
+
+  // ── Icons ─────────────────────────────────────────────────────────────────
+  const setNodeIcon = useCallback((nodeId: string, iconName: string | null) => {
+    const next = editNode(root, nodeId, (node) => { node.icons = toggleIcon(node.icons, iconName); });
+    if (next) mutate(next);
+  }, [root, mutate]);
+
+  // ── Dates ─────────────────────────────────────────────────────────────────
+  const setNodeDates = useCallback((nodeId: string, startDate: string | null, endDate: string | null) => {
+    const next = editNode(root, nodeId, (node) => { node.startDate = startDate; node.endDate = endDate; });
+    if (next) mutate(next);
+  }, [root, mutate]);
+
+  // ── URLs ──────────────────────────────────────────────────────────────────
+  const addNodeUrl = useCallback((nodeId: string, entry: UrlEntry) => {
+    const next = editNode(root, nodeId, (node) => { node.urls = addUrl(node.urls, entry); });
+    if (next) mutate(next);
+  }, [root, mutate]);
+
+  const removeNodeUrl = useCallback((nodeId: string, urlIndex: number) => {
+    const next = editNode(root, nodeId, (node) => {
+      if (!node.urls) return false;
+      node.urls = removeUrl(node.urls, urlIndex);
+    });
+    if (next) mutate(next);
+  }, [root, mutate]);
+
+  // ── Move siblings ─────────────────────────────────────────────────────────
+  const moveNode = useCallback((nodeId: string, direction: 'up' | 'down') => {
+    const next = moveSibling(root, nodeId, direction);
+    if (next) mutate(next);
+  }, [root, mutate]);
+
+  // ── Duplicate ─────────────────────────────────────────────────────────────
+  const duplicateNode = useCallback((nodeId: string) => {
+    if (nodeId === 'root') return;
+    const found = findNode(root, nodeId);
+    if (!found) return;
+    const clone = cloneSubtreeWithNewIds(found.node);
+    const next = insertAfter(root, nodeId, clone);
+    if (!next) return;
+    mutate(next);
+    setSelectedId(clone.id);
+  }, [root, mutate]);
+
+  // ── Reparent (drag-drop) ──────────────────────────────────────────────────
+  const reparentNode = useCallback((nodeId: string, newParentId: string) => {
+    const next = reparentNodeOp(root, nodeId, newParentId);
+    if (!next) return;
+    mutate(next);
+    setSelectedId(nodeId);
+  }, [root, mutate]);
+
+  // ── Reset position ────────────────────────────────────────────────────────
+  const resetNodePosition = useCallback((nodeId: string) => {
+    // This node only. `autoAlignSubtree` is the one that clears the branch.
+    const next = editNode(root, nodeId, (node) => { node.customX = undefined; node.customY = undefined; });
+    if (next) mutate(next);
+  }, [root, mutate]);
+
+  const resetAllPositions = useCallback(() => {
+    const next = resetPositions(root, null);
+    if (next) mutate(next);
+  }, [root, mutate]);
+
+  // ── Auto-align subtree ────────────────────────────────────────────────────
+  const autoAlignSubtree = useCallback((nodeId: string) => {
+    const next = resetPositions(root, nodeId);
+    if (next) mutate(next);
+  }, [root, mutate]);
+
+  // ── File link ─────────────────────────────────────────────────────────────
+  /**
+   * The linked file's title is stored on the node alongside its path so the
+   * footer strip can render without resolving the path (which may have moved
+   * or been deleted).
+   */
+  const setNodeLink = useCallback((nodeId: string, file: LinkableFile | null) => {
+    const next = editNode(root, nodeId, (node) => {
+      node.link = file ? { type: 'file', path: file.path, label: file.title } : null;
+    });
+    if (next) mutate(next);
+  }, [root, mutate]);
+
+  const openFileLinkPicker = useCallback((nodeId: string) => {
+    onRequestLinkableFiles?.();
+    setLinkTargetNodeId(nodeId);
+  }, [onRequestLinkableFiles]);
+
+  // ── Tags ──────────────────────────────────────────────────────────────────
+  const setNodeTags = useCallback((nodeId: string, tags: string[]) => {
+    const next = editNode(root, nodeId, (node) => { node.tags = tags; });
+    if (next) mutate(next);
+  }, [root, mutate]);
+
+  // ── Bulk helpers: apply an action to all selected nodes in one clone ─────
+  const getTargetIds = useCallback(() => {
+    const ids = new Set(multiSelect);
+    ids.add(selectedId);
+    return ids;
+  }, [selectedId, multiSelect]);
+
+  const bulkToggleCheckbox = useCallback(() => {
+    mutate(editNodes(root, getTargetIds(), (node) => { node.checked = toggleChecked(node.checked); }));
+  }, [root, mutate, getTargetIds]);
+
+  const bulkCycleProgress = useCallback(() => {
+    mutate(editNodes(root, getTargetIds(), (node) => {
+      node.progress = nextInCycle(PROGRESS_CYCLE, node.progress ?? null);
+    }));
+  }, [root, mutate, getTargetIds]);
+
+  const bulkSetColor = useCallback((color: string | null) => {
+    mutate(editNodes(root, getTargetIds(), (node) => { node.color = color; }));
+  }, [root, mutate, getTargetIds]);
+
+  const bulkDelete = useCallback(() => {
+    const removed = removeNodes(root, getTargetIds());
+    if (!removed) return;
+    setSelectedId(removed.parentId);
+    setMultiSelect(new Set());
+    mutate(removed.root);
+  }, [root, mutate, getTargetIds]);
+
+  const bulkToggleCollapse = useCallback(() => {
+    mutate(editNodes(root, getTargetIds(), (node) => {
+      if (node.children.length > 0) node.collapsed = !node.collapsed;
+    }));
+  }, [root, mutate, getTargetIds]);
+
+  const bulkResetPosition = useCallback(() => {
+    mutate(editNodes(root, getTargetIds(), (node) => { node.customX = undefined; node.customY = undefined; }));
+  }, [root, mutate, getTargetIds]);
+
+  const bulkSetIcon = useCallback((iconName: string | null) => {
+    mutate(editNodes(root, getTargetIds(), (node) => { node.icons = toggleIcon(node.icons, iconName); }));
+  }, [root, mutate, getTargetIds]);
+
+  const hasBulk = multiSelect.size > 0;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  EDITING
+  // ══════════════════════════════════════════════════════════════════════════
+
+  const startEditing = (node: MindMapTreeNode) => {
+    setEditingId(node.id);
+    setEditText(node.text);
+    setTimeout(() => editRef.current?.focus(), 20);
+  };
+
+  const commitEdit = useCallback(() => {
+    if (!editingId) return;
+    const newRoot = cloneTree(root);
+    const found = findNode(newRoot, editingId);
+    if (found) {
+      const trimmed = editText.trim();
+      if (!trimmed && editingId !== 'root' && found.parent) {
+        found.parent.children.splice(found.index, 1);
+        setSelectedId(found.parent.id);
+      } else {
+        found.node.text = trimmed || found.node.text;
+      }
+      mutate(newRoot);
+    }
+    setEditingId(null);
+  }, [editingId, editText, root, mutate]);
+
+  const cancelEdit = useCallback(() => {
+    if (editingId && editingId !== 'root') {
+      const found = findNode(root, editingId);
+      if (found && !found.node.text.trim() && found.parent) {
+        const newRoot = cloneTree(root);
+        const foundInNew = findNode(newRoot, editingId);
+        if (foundInNew?.parent) {
+          foundInNew.parent.children.splice(foundInNew.index, 1);
+          setSelectedId(foundInNew.parent.id);
+          mutate(newRoot);
+        }
+      }
+    }
+    setEditingId(null);
+  }, [editingId, root, mutate]);
+
+  // ── Notes ─────────────────────────────────────────────────────────────────
+  const openNotes = useCallback((nodeId: string) => {
+    const found = findNode(root, nodeId);
+    if (!found) return;
+    const nextText = found.node.notes ?? '';
+    setNotesText(nextText);
+    setNotesSeed(nextText);
+    setNotesNodeId(nodeId);
+    setNotesSaveState('saved');
+    setNotesOpen(true);
+  }, [root]);
+
+  /**
+   * Writes the note text into the tree. Notes autosave, so this is called on a
+   * debounce while typing and again on close — never from a Save button.
+   */
+  const commitNotes = useCallback((text: string, nodeId: string) => {
+    const newRoot = cloneTree(root);
+    const found = findNode(newRoot, nodeId);
+    if (!found || (found.node.notes ?? '') === text) return;
+    found.node.notes = text;
+    mutate(newRoot);
+  }, [root, mutate]);
+
+  const saveNotes = useCallback(() => {
+    commitNotes(notesText, notesNodeId);
+    setNotesSaveState('saved');
+  }, [commitNotes, notesText, notesNodeId]);
+
+  /** Flush any pending autosave, then close. */
+  const closeNotes = useCallback(() => {
+    commitNotes(notesText, notesNodeId);
+    setNotesSaveState('saved');
+    setNotesOpen(false);
+  }, [commitNotes, notesText, notesNodeId]);
+
+  const deleteNotes = useCallback(() => {
+    const newRoot = cloneTree(root);
+    const found = findNode(newRoot, notesNodeId);
+    if (found) { found.node.notes = ''; mutate(newRoot); }
+    setNotesText('');
+    setNotesOpen(false);
+  }, [root, notesNodeId, mutate]);
+
+  // CodeMirror owns the selection, so these delegate to the editor handle
+  // rather than doing selectionStart/End arithmetic on a textarea.
+  const editNotesSelection = useCallback((writer: (selected: string) => string, fallback = '') => {
+    notesRef.current?.editSelection(writer, fallback);
+  }, []);
+
+  const prefixNotesLines = useCallback((prefix: string, fallback = '') => {
+    notesRef.current?.prefixLines(prefix, fallback);
+  }, []);
+
+  /**
+   * Tick a checkbox from the read-mode pane. The autosave effect picks the
+   * new text up from `notesText`; the editor is told separately because it
+   * stays mounted across modes and would otherwise hold the old document.
+   */
+  const toggleNotesTask = useCallback((taskIndex: number) => {
+    const next = toggleTaskAtIndex(notesText, taskIndex);
+    if (next === null) return;
+    setNotesText(next);
+    notesRef.current?.replaceAll(next);
+  }, [notesText]);
+
+  const insertMarkdownAction = useCallback((action: 'h1' | 'h2' | 'h3' | 'bold' | 'italic' | 'ul' | 'ol' | 'task' | 'quote' | 'code' | 'link') => {
+    if (action === 'h1') { prefixNotesLines('# ', 'Heading 1'); return; }
+    if (action === 'h2') { prefixNotesLines('## ', 'Heading 2'); return; }
+    if (action === 'h3') { prefixNotesLines('### ', 'Heading 3'); return; }
+    if (action === 'ul') { prefixNotesLines('- ', 'List item'); return; }
+    if (action === 'task') { prefixNotesLines('- [ ] ', 'Task item'); return; }
+    if (action === 'quote') { prefixNotesLines('> ', 'Quoted text'); return; }
+    if (action === 'ol') {
+      editNotesSelection((selected) => {
+        const lines = (selected || 'List item').split('\n');
+        return lines.map((line, index) => `${index + 1}. ${line}`).join('\n');
+      }, 'List item');
+      return;
+    }
+    if (action === 'bold') { editNotesSelection((selected) => `**${selected || 'bold text'}**`, 'bold text'); return; }
+    if (action === 'italic') { editNotesSelection((selected) => `*${selected || 'italic text'}*`, 'italic text'); return; }
+    if (action === 'code') { editNotesSelection((selected) => `\`${selected || 'code'}\``, 'code'); return; }
+    if (action === 'link') { editNotesSelection((selected) => `[${selected || 'link text'}](https://)`, 'link text'); }
+  }, [editNotesSelection, prefixNotesLines]);
+
+  const uploadFilesIntoNotes = useCallback(async (files: File[]) => {
+    if (!onNodeFileDrop || files.length === 0) {
+      showToast('Attachments are unavailable in this mode');
+      return;
+    }
+
+    setNotesUploadBusy(true);
+    try {
+      const refs = await onNodeFileDrop(selectedId, files);
+      if (refs.length === 0) return;
+
+      const markdownLines = refs.map((attachment) => {
+        const safeName = (attachment.name || 'image').replace(/]/g, '\\]');
+        const isImage = attachment.preview_kind === 'image' || attachment.content_type.startsWith('image/');
+        if (isImage) {
+          return `![${safeName}](attachment://${attachment.attachment_id})`;
+        }
+        return `[Attachment: ${safeName}](attachment://${attachment.attachment_id})`;
+      });
+      // Read the live document from the editor: `notesText` lags by a render
+      // while typing, and the upload is async on top of that.
+      const currentNotes = notesRef.current?.getValue() ?? notesText;
+      const existingSet = new Set(currentNotes.split('\n').map((line) => line.trim()));
+      const uniqueNewLines = markdownLines.filter((line) => !existingSet.has(line.trim()));
+
+      let nextNotes = currentNotes;
+      if (uniqueNewLines.length > 0) {
+        const payload = uniqueNewLines.join('\n');
+        if (notesRef.current) {
+          // The editor inserts at the caret and handles blank-line separation.
+          notesRef.current.insertBlock(payload);
+          nextNotes = notesRef.current.getValue();
+        } else {
+          nextNotes = `${currentNotes}${currentNotes.trim().length > 0 ? '\n' : ''}${payload}`;
+        }
+      }
+
+      const newRoot = cloneTree(root);
+      const found = findNode(newRoot, selectedId);
+      if (found) {
+        found.node.attachments = [...(found.node.attachments ?? []), ...refs];
+        found.node.notes = nextNotes;
+        mutate(newRoot);
+      }
+      setNotesText(nextNotes);
+      refs.forEach((attachment) => { void loadAttachmentPreview(attachment); });
+      showToast(`${refs.length} file${refs.length === 1 ? '' : 's'} added to notes`);
+    } catch {
+      showToast('File upload failed');
+    } finally {
+      setNotesUploadBusy(false);
+      setNotesDropActive(false);
+    }
+  }, [loadAttachmentPreview, mutate, notesText, onNodeFileDrop, root, selectedId, showToast]);
+
+  // Autosave: notes commit on a pause in typing, and again on close. There is
+  // deliberately no Save button — closing or pressing Escape must never lose
+  // work, which was the main hazard of the previous dialog.
+  useEffect(() => {
+    if (!notesOpen) return;
+    const found = findNode(root, notesNodeId);
+    if (!found || (found.node.notes ?? '') === notesText) {
+      setNotesSaveState('saved');
+      return;
+    }
+    setNotesSaveState('saving');
+    const timer = setTimeout(() => {
+      commitNotes(notesText, notesNodeId);
+      setNotesSaveState('saved');
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [notesText, notesOpen, notesNodeId, commitNotes, root]);
+
+  const deleteNotesAttachment = useCallback(async (attachment: NodeAttachmentRef) => {
+    if (!onDeleteNodeAttachment) return;
+    try {
+      await onDeleteNodeAttachment(attachment);
+      const newRoot = cloneTree(root);
+      const found = findNode(newRoot, selectedId);
+      if (found) {
+        const filtered = (found.node.attachments ?? []).filter((item) => item.attachment_id !== attachment.attachment_id);
+        found.node.attachments = filtered;
+        found.node.notes = (found.node.notes ?? '')
+          .split('\n')
+          .filter((line) => !line.includes(`attachment://${attachment.attachment_id}`))
+          .join('\n');
+        mutate(newRoot);
+        setNotesText(found.node.notes ?? '');
+      }
+      setAttachmentPreviewUrls((current) => {
+        const next = { ...current };
+        const preview = next[attachment.attachment_id];
+        if (preview) URL.revokeObjectURL(preview);
+        delete next[attachment.attachment_id];
+        return next;
+      });
+      showToast('Attachment removed');
+    } catch {
+      showToast('Attachment delete failed');
+    }
+  }, [mutate, onDeleteNodeAttachment, root, selectedId, showToast]);
+
+  // ── Search ────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!searchQuery.trim()) { setSearchResults([]); return; }
+    const q = searchQuery.toLowerCase();
+    const all = flattenAll(root);
+    const matches = all.filter((n) => n.text.toLowerCase().includes(q)).map((n) => n.id);
+    setSearchResults(matches);
+    setSearchIdx(0);
+    if (matches.length > 0) setSelectedId(matches[0]);
+  }, [searchQuery, root]);
+
+  const searchNext = useCallback(() => {
+    if (searchResults.length === 0) return;
+    const next = (searchIdx + 1) % searchResults.length;
+    setSearchIdx(next);
+    setSelectedId(searchResults[next]);
+  }, [searchResults, searchIdx]);
+
+  const searchPrev = useCallback(() => {
+    if (searchResults.length === 0) return;
+    const prev = (searchIdx - 1 + searchResults.length) % searchResults.length;
+    setSearchIdx(prev);
+    setSelectedId(searchResults[prev]);
+  }, [searchResults, searchIdx]);
+
+  // ── Auto-pan to selected node ─────────────────────────────────────────────
+  useLayoutEffect(() => {
+    if (disableAutoPanToSelection) return;
+    if (skipNextAutoPan.current) {
+      skipNextAutoPan.current = false;
+      return;
+    }
+    const box = layout[selectedId];
+    if (!box || !containerRef.current) return;
+    const { width, height } = containerRef.current.getBoundingClientRect();
+    const margin = 60;
+    const left = pan.x + box.x * zoom;
+    const top = pan.y + box.y * zoom;
+    const right = left + box.w * zoom;
+    const bottom = top + box.h * zoom;
+    let dx = 0, dy = 0;
+    if (left < margin) dx = margin - left;
+    else if (right > width - margin) dx = (width - margin) - right;
+    if (top < 60 + margin) dy = (60 + margin) - top;
+    else if (bottom > height - margin) dy = (height - margin) - bottom;
+    if (dx !== 0 || dy !== 0) setPan({ x: pan.x + dx, y: pan.y + dy });
+  }, [disableAutoPanToSelection, selectedId, layout]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Save handler ──────────────────────────────────────────────────────────
+  /**
+   * The tree as it stands, view state and all.
+   *
+   * This literal was written out seven times — save, autosave, and once per
+   * export format — and every one of them had to agree about what the view
+   * state contains.
+   */
+  const currentTreeSnapshot = useCallback((): MindMapTree => ({
+    version: 'tree',
+    root: cloneTree(root),
+    view_state: {
+      pan_x: Math.round(pan.x),
+      pan_y: Math.round(pan.y),
+      zoom: Number(zoom.toFixed(3)),
+      focus_mode: focusMode,
+      focus_anchor_id: focusAnchorId,
+      selected_node_id: selectedId,
+    },
+  }), [root, pan, zoom, focusMode, focusAnchorId, selectedId]);
+
+  const handleSave = useCallback(() => {
+    if (saving) return;
+    onSave(currentTreeSnapshot(), title);
+    setIsDirty(false);
+  }, [currentTreeSnapshot, onSave, saving, title]);
+
+  const buildExportFileBaseName = useCallback(
+    (baseTitle?: string) =>
+      buildExportName({ baseTitle, title, fallback: 'mindmap', versionLabel }),
+    [title, versionLabel],
+  );
+
+  // ── PNG export ────────────────────────────────────────────────────────────
+  const exportPng = useCallback(async () => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const parsed = versionTooltip ? new Date(versionTooltip) : null;
+    const exportDate = parsed && !Number.isNaN(parsed.getTime()) ? parsed : new Date();
+
+    try {
+      const canvas = await renderSvgToCanvas(svg, versionLabel, exportDate.toISOString());
+      const pngBlob: Blob | null = await new Promise((resolve) => canvas.toBlob((b) => resolve(b), 'image/png'));
+      if (pngBlob) {
+        await downloadBlob(pngBlob, `${buildExportFileBaseName()}.png`);
+        return;
+      }
+      // canvas.toBlob can yield null (e.g. OOM on very large maps) — the data
+      // URL path is a genuinely different encode, not a retry of the same call.
+      const dataUrl = canvas.toDataURL('image/png');
+      await downloadDataUrl(dataUrl, `${buildExportFileBaseName()}.png`);
+    } catch (err) {
+      showToast('PNG export failed');
+    }
+  }, [svgRef, buildExportFileBaseName, versionLabel, versionTooltip, showToast]);
+
+  // ── PDF export ────────────────────────────────────────────────────────────
+  const exportPdf = useCallback(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const parsed = versionTooltip ? new Date(versionTooltip) : null;
+    const exportDate = parsed && !Number.isNaN(parsed.getTime()) ? parsed : new Date();
+    exportSvgAsPdf(svg, buildExportFileBaseName(), versionLabel, exportDate.toISOString()).catch(() => showToast('PDF export failed'));
+  }, [svgRef, buildExportFileBaseName, versionLabel, versionTooltip, showToast]);
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  FOCUS MODE
+  // ══════════════════════════════════════════════════════════════════════════
+
+  const focusedIds = useMemo<Set<string>>(() => {
+    if (!focusMode || !focusAnchorId) return new Set();
+    const found = findNode(root, focusAnchorId);
+    if (!found) return new Set();
+    const ids = new Set<string>();
+    const walk = (n: MindMapTreeNode) => { ids.add(n.id); (n.children || []).forEach(walk); };
+    walk(found.node);
+    return ids;
+  }, [focusMode, focusAnchorId, root]);
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  KEYBOARD
+  // ══════════════════════════════════════════════════════════════════════════
+
+  const navigateKeys = useCallback((e: KeyboardEvent) => {
+    if (notesOpen) {
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'Enter' || e.key.toLowerCase() === 's')) {
+        e.preventDefault();
+        saveNotes();
+        showToast('Notes saved');
+        return;
+      }
+      // Escape and Ctrl+E are handled inside the editor's own keymap.
+      return;
+    }
+    if (editingId) {
+      if (e.key === 'Escape') { cancelEdit(); e.preventDefault(); }
+      return;
+    }
+    // When the icon picker or colour picker is open, only allow Escape to
+    // close it - all other keys are handled by the picker so we must not navigate.
+    if (showIconPicker) {
+      if (e.key === 'Escape') { setShowIconPicker(false); e.preventDefault(); }
+      return;
+    }
+    if (showColorPicker) {
+      if (e.key === 'Escape') { setShowColorPicker(false); e.preventDefault(); }
+      return;
+    }
+    if (!selectedId) return;
+
+    // Alt+Arrow is reserved for zoom (FreeMind's real Alt+Up/Alt+Down binding)
+    // and falls through to the registry dispatch below instead.
+    if (!e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      e.preventDefault();
+      const box = layout[selectedId];
+      if (!box) return;
+      const cx = box.x + box.w / 2;
+      const cy = box.y + box.h / 2;
+      // In focus mode only navigate among focused nodes
+      const candidateIds = (focusMode && focusedIds.size > 0)
+        ? [...focusedIds].filter((id) => id !== selectedId && layout[id])
+        : Object.keys(layout).filter((id) => id !== selectedId);
+      let bestId: string | null = null;
+      let bestDist = Infinity;
+      for (const id of candidateIds) {
+        const b = layout[id];
+        const bx = b.x + b.w / 2;
+        const by = b.y + b.h / 2;
+        const dx = bx - cx;
+        const dy = by - cy;
+        let ok = false;
+        if (e.key === 'ArrowUp')    ok = dy < -5;
+        if (e.key === 'ArrowDown')  ok = dy > 5;
+        if (e.key === 'ArrowLeft')  ok = dx < -5;
+        if (e.key === 'ArrowRight') ok = dx > 5;
+        if (!ok) continue;
+        const isVertical = e.key === 'ArrowUp' || e.key === 'ArrowDown';
+        const primary = isVertical ? Math.abs(dy) : Math.abs(dx);
+        const secondary = isVertical ? Math.abs(dx) : Math.abs(dy);
+        const dist = primary + secondary * 0.35;
+        if (dist < bestDist) { bestDist = dist; bestId = id; }
+      }
+      if (bestId) {
+        if (e.shiftKey) {
+          // Shift+Arrow: toggle multi-select
+          setMultiSelect((prev) => { const s = new Set(prev); s.add(selectedId); s.add(bestId!); return s; });
+        } else {
+          setMultiSelect(new Set());
+        }
+        setSelectedId(bestId);
+      }
+      return;
+    }
+
+    if (e.key === 'Escape') {
+      setShowShortcuts(false); setShowColorPicker(false); setShowIconPicker(false);
+      setShowExportMenu(false); setContextMenu(null); setSearchOpen(false);
+      setMultiSelect(new Set()); setShowTagDialog(false);
+      return;
+    }
+
+    // ── Registry-driven dispatch — see shortcuts/registry.ts ───────────────
+    const toast = (id: string, text: string) => showToast(`${formatShortcut(id, keyboardLayout)} — ${text}`);
+
+    const actionHandlers: Record<string, () => void> = {
+      'node.addChild': () => { addChild(selectedId); toast('node.addChild', 'Add child'); },
+      'node.addLeftChild': () => {
+        if (selectedId === 'root') { addChild('root', 'left'); toast('node.addLeftChild', 'Add left child'); }
+        else { addChild(selectedId); toast('node.addChild', 'Add child'); }
+      },
+      'node.addSibling': () => { addSibling(selectedId); toast('node.addSibling', 'Add sibling'); },
+      'node.delete': () => { hasBulk ? bulkDelete() : deleteNode(selectedId); toast('node.delete', 'Delete node'); },
+      // Registry matches Alt+K by `code`, not `key`: on macOS Option+K
+      // produces "˚", so comparing the character would break there.
+      'node.addImage': () => {
+        nodeImageTargetRef.current = selectedId;
+        nodeImageInputRef.current?.click();
+        toast('node.addImage', 'Add image');
+      },
+      'node.rename': () => {
+        const f = findNode(root, selectedId);
+        if (f) startEditing(f.node);
+        toast('node.rename', 'Rename');
+      },
+      'node.notesToggle': () => {
+        setNotesOpen((v) => { if (!v) openNotes(selectedId); return !v; });
+        toast('node.notesToggle', 'Notes');
+      },
+      'node.notesOpen': () => { openNotes(selectedId); toast('node.notesOpen', 'Edit notes'); },
+      'node.colour': () => { setShowColorPicker((v) => !v); toast('node.colour', 'Colour'); },
+      'view.focusMode': () => {
+        setFocusMode((v) => { if (!v) setFocusAnchorId(selectedId); return !v; });
+        showToast(`${formatShortcut('view.focusMode', keyboardLayout)} — ${focusMode ? 'Focus off' : 'Focus on'}`);
+      },
+      'find.shortcuts': () => { setShowShortcuts((v) => !v); toast('find.shortcuts', 'Shortcuts'); },
+      'node.attachFile': () => {
+        nodeAttachmentInputRef.current?.click();
+        toast('node.attachFile', 'Attach file');
+      },
+      'node.linkFile': () => { openFileLinkPicker(selectedId); toast('node.linkFile', 'Link to a file'); },
+      'edit.undo': () => { undo(); toast('edit.undo', 'Undo'); },
+      'edit.redo': () => { redo(); toast('edit.redo', 'Redo'); },
+      'node.fold': () => {
+        hasBulk ? bulkToggleCollapse() : toggleCollapse(selectedId);
+        toast('node.fold', 'Fold / Unfold');
+      },
+      'view.root': () => { setSelectedId('root'); toast('view.root', 'Root'); },
+      'node.checkbox': () => {
+        hasBulk ? bulkToggleCheckbox() : toggleCheckbox(selectedId);
+        toast('node.checkbox', 'Checkbox');
+      },
+      'node.progress': () => {
+        hasBulk ? bulkCycleProgress() : cycleProgress(selectedId);
+        toast('node.progress', 'Progress');
+      },
+      'node.icons': () => { setShowIconPicker((v) => !v); toast('node.icons', 'Icons'); },
+      'node.dates': () => { setShowDateDialog((v) => !v); toast('node.dates', 'Dates'); },
+      'node.url': () => { setShowUrlDialog((v) => !v); toast('node.url', 'URL'); },
+      'node.resetPosition': () => {
+        hasBulk ? bulkResetPosition() : resetNodePosition(selectedId);
+        toast('node.resetPosition', 'Reset position');
+      },
+      'node.resetAllPositions': () => { resetAllPositions(); toast('node.resetAllPositions', 'Reset all positions'); },
+      'node.labels': () => { setShowTagDialog((v) => !v); toast('node.labels', 'Labels'); },
+      'node.autoAlign': () => {
+        autoAlignSubtree(selectedId);
+        showToast(`${formatShortcut('node.autoAlign', keyboardLayout)} — ${selectedId === 'root' ? 'Auto-align all' : 'Auto-align subtree'}`);
+      },
+      // No toast for search / zoom — matches the pre-registry behaviour,
+      // which never announced these (search opens visibly; zoom repeats fast).
+      'find.search': () => { setSearchOpen(true); setTimeout(() => searchRef.current?.focus(), 50); },
+      'view.zoomIn': () => { setZoom((z) => Math.min(3, z + 0.15)); },
+      'view.zoomOut': () => { setZoom((z) => Math.max(0.3, z - 0.15)); },
+      'view.zoomFit': () => fitView(),
+      'nav.back': () => { onBack?.(); },
+      'view.colourTray': () => {
+        setColourTray(!colourTrayEnabled);
+        toast('view.colourTray', colourTrayEnabled ? 'Colour tray off' : 'Colour tray on');
+      },
+      'view.iconTray': () => {
+        setIconTray(!iconTrayEnabled);
+        toast('view.iconTray', iconTrayEnabled ? 'Icon tray off' : 'Icon tray on');
+      },
+    };
+
+    const actionId = matchShortcut(e, keyboardLayout);
+    if (!actionId) return;
+    // Nothing to pick from when the page has not wired vault linking up.
+    if (actionId === 'node.linkFile' && !onOpenFileLink) return;
+    const handler = actionHandlers[actionId];
+    if (!handler) return;
+    e.preventDefault();
+    handler();
+  }, [editingId, notesOpen, openNotes, saveNotes, selectedId, root, layout, addChild, addSibling, deleteNode, cancelEdit, cycleProgress,
+    toggleCheckbox, undo, redo, toggleCollapse, showToast, resetNodePosition, resetAllPositions, autoAlignSubtree, showIconPicker, showColorPicker, focusMode, focusedIds,
+    hasBulk, bulkDelete, bulkToggleCheckbox, bulkCycleProgress, bulkToggleCollapse, bulkResetPosition, keyboardLayout,
+    colourTrayEnabled, setColourTray, iconTrayEnabled, setIconTray, openFileLinkPicker, onOpenFileLink]);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === 'INPUT' || (tag === 'TEXTAREA' && (e.target as HTMLElement) !== editRef.current)) {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+          e.preventDefault();
+          if (notesOpen) {
+            saveNotes();
+          } else {
+            handleSave();
+          }
+        }
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); handleSave(); showToast(`${formatShortcut('file.save', keyboardLayout)} — Save`); return; }
+      navigateKeys(e);
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [navigateKeys, handleSave, notesOpen, saveNotes, showToast, keyboardLayout]);
+
+  // ── Autosave ──────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const hasUnsavedChanges = isDirty || !!titleChanged;
+    if (autosaveTimer.current) { clearTimeout(autosaveTimer.current); autosaveTimer.current = null; }
+    if (autosaveInterval.current) { clearInterval(autosaveInterval.current); autosaveInterval.current = null; }
+    if (!hasUnsavedChanges || saving || autosaveMode === 'never') return;
+
+    if (autosaveMode === 'change') {
+      autosaveTimer.current = setTimeout(() => handleSave(), 1000);
+      return () => { if (autosaveTimer.current) clearTimeout(autosaveTimer.current); };
+    }
+    const intervalMs = autosaveMode === '30s' ? 30_000 : 5 * 60_000;
+    autosaveInterval.current = setInterval(() => { if (isDirty || titleChanged) handleSave(); }, intervalMs);
+    return () => { if (autosaveInterval.current) clearInterval(autosaveInterval.current); };
+  }, [root, title, titleChanged, autosaveMode, saving, handleSave, isDirty]);
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ZOOM / PAN / DRAG-AND-DROP
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // React attaches wheel handlers passively, so e.preventDefault() there is a
+  // no-op and ctrl+wheel zoom also scrolls/zooms the page. Bind natively with
+  // { passive: false } instead.
+  const onWheelNative = useCallback((e: WheelEvent) => {
+    if (e.ctrlKey || e.metaKey) { e.preventDefault(); setZoom((z) => Math.min(3, Math.max(0.3, z - e.deltaY * 0.001))); }
+    else setPan((p) => ({ x: p.x - e.deltaX, y: p.y - e.deltaY }));
+  }, []);
+
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    el.addEventListener('wheel', onWheelNative, { passive: false });
+    return () => el.removeEventListener('wheel', onWheelNative);
+  }, [onWheelNative]);
+
+  const onMouseDownSvg = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+    if ((e.target as SVGElement).closest('[data-node]')) return;
+    // Shift+click on empty canvas starts rectangle selection
+    if (e.shiftKey) {
+      const rect = svgRef.current?.getBoundingClientRect();
+      if (rect) {
+        const sx = (e.clientX - rect.left - pan.x) / zoom;
+        const sy = (e.clientY - rect.top - pan.y) / zoom;
+        setRectSel({ startX: sx, startY: sy, curX: sx, curY: sy });
+      }
+      e.preventDefault();
+      return;
+    }
+    isPanning.current = true;
+    lastPan.current = { x: e.clientX, y: e.clientY };
+    e.currentTarget.style.cursor = 'grabbing';
+    setContextMenu(null);
+    setMultiSelect(new Set());
+  }, [pan, zoom]);
+
+  const onMouseMoveSvg = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+    // Rectangle selection drag
+    if (rectSel) {
+      const rect = svgRef.current?.getBoundingClientRect();
+      if (rect) {
+        const cx = (e.clientX - rect.left - pan.x) / zoom;
+        const cy = (e.clientY - rect.top - pan.y) / zoom;
+        setRectSel((r) => r ? { ...r, curX: cx, curY: cy } : null);
+      }
+      return;
+    }
+    if (dragRef.current) {
+      const d = dragRef.current;
+      const { x: dx, y: dy } = dragDelta(
+        { x: d.startClientX, y: d.startClientY },
+        { x: e.clientX, y: e.clientY },
+        zoom,
+      );
+      if (!d.moved && passedDragThreshold({ x: dx, y: dy })) { d.moved = true; setIsDragging(true); }
+      if (d.moved) {
+        d.currentX = d.origX + dx;
+        d.currentY = d.origY + dy;
+        // Move the dragged node visually
+        const el = svgRef.current?.querySelector(`[data-node="${d.nodeId}"]`) as SVGGElement | null;
+        if (el) el.style.transform = `translate(${dx}px, ${dy}px)`;
+        // Also move other multi-selected nodes
+        if (multiSelect.size > 0) {
+          for (const id of multiSelect) {
+            if (id === d.nodeId) continue;
+            const mel = svgRef.current?.querySelector(`[data-node="${id}"]`) as SVGGElement | null;
+            if (mel) mel.style.transform = `translate(${dx}px, ${dy}px)`;
+          }
+        }
+        // Drop target detection (only when dragging a single node)
+        if (multiSelect.size <= 1) {
+          setDropTargetId(findDropTarget(layout, d.nodeId, { x: d.currentX, y: d.currentY }));
+        }
+      }
+      return;
+    }
+    if (!isPanning.current) return;
+    const dx = e.clientX - lastPan.current.x;
+    const dy = e.clientY - lastPan.current.y;
+    lastPan.current = { x: e.clientX, y: e.clientY };
+    setPan((p) => ({ x: p.x + dx, y: p.y + dy }));
+  }, [zoom, layout, rectSel, pan, multiSelect]);
+
+  const onTouchStartSvg = useCallback((e: React.TouchEvent<SVGSVGElement>) => {
+    if (e.touches.length !== 1) return;
+    if ((e.target as SVGElement).closest('[data-node]')) return;
+    const touch = e.touches[0];
+    isPanning.current = true;
+    lastPan.current = { x: touch.clientX, y: touch.clientY };
+    setContextMenu(null);
+    setMultiSelect(new Set());
+  }, []);
+
+  const onTouchMoveSvg = useCallback((e: React.TouchEvent<SVGSVGElement>) => {
+    if (!isPanning.current || e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    const dx = touch.clientX - lastPan.current.x;
+    const dy = touch.clientY - lastPan.current.y;
+    lastPan.current = { x: touch.clientX, y: touch.clientY };
+    setPan((p) => ({ x: p.x + dx, y: p.y + dy }));
+  }, []);
+
+  const onTouchEndSvg = useCallback(() => {
+    isPanning.current = false;
+    if (svgRef.current) svgRef.current.style.cursor = '';
+  }, []);
+
+  const getNodeIdAtClientPoint = useCallback((clientX: number, clientY: number): string | null => {
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (!rect) return selectedId !== 'root' ? selectedId : null;
+    const x = (clientX - rect.left - pan.x) / zoom;
+    const y = (clientY - rect.top - pan.y) / zoom;
+
+    const entries = Object.entries(layout).reverse();
+    for (const [nodeId, box] of entries) {
+      if (x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h) {
+        return nodeId;
+      }
+    }
+
+    return selectedId !== 'root' ? selectedId : null;
+  }, [layout, pan.x, pan.y, selectedId, zoom]);
+
+  const onDragOverSvg = useCallback((e: React.DragEvent<SVGSVGElement>) => {
+    if (!Array.from(e.dataTransfer.types).includes('Files')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    setDropTargetId(getNodeIdAtClientPoint(e.clientX, e.clientY));
+  }, [getNodeIdAtClientPoint]);
+
+  // ── Node images ───────────────────────────────────────────────────────────
+
+  /**
+   * Puts a picture on a node.
+   *
+   * The order matters. The glyph is generated first and the original uploaded
+   * second, and only then is `node.image` written. Failing between the upload
+   * and the write leaves an attachment nothing points at — invisible and
+   * harmless. The other order would leave a node pointing at nothing.
+   */
+  const attachNodeImage = useCallback(async (nodeId: string, file: File) => {
+    let glyph: NodeImageGlyph;
+    try {
+      glyph = await createNodeImageGlyph(file);
+    } catch {
+      showToast('That file is not an image the browser can read');
+      return;
+    }
+
+    if (!onNodeFileDrop) {
+      // Local-only editors still get the picture; there is nothing to upload to
+      // and nothing to click through to.
+      const newRoot = cloneTree(root);
+      const found = findNode(newRoot, nodeId);
+      if (!found) return;
+      found.node.image = { ...glyph, name: file.name };
+      mutate(newRoot);
+      showToast('Image added to node');
+      return;
+    }
+
+    setNodeImageBusy(true);
+    try {
+      const refs = await onNodeFileDrop(nodeId, [file]);
+      const newRoot = cloneTree(root);
+      const found = findNode(newRoot, nodeId);
+      if (!found) return;
+      found.node.image = {
+        ...glyph,
+        attachment_id: refs[0]?.attachment_id ?? null,
+        name: file.name,
+      };
+      if (refs.length > 0) {
+        found.node.attachments = [...(found.node.attachments ?? []), ...refs];
+      }
+      mutate(newRoot);
+      refs.forEach((attachment) => { void loadAttachmentPreview(attachment); });
+      showToast(refs.length > 0 ? 'Image added to node' : 'Image added — the full-size copy did not upload');
+    } catch {
+      showToast('Image upload failed');
+    } finally {
+      setNodeImageBusy(false);
+    }
+  }, [loadAttachmentPreview, mutate, onNodeFileDrop, root, showToast]);
+
+  /** Removes the glyph. The original stays an ordinary attachment on the node. */
+  const removeNodeImage = useCallback((nodeId: string) => {
+    const newRoot = cloneTree(root);
+    const found = findNode(newRoot, nodeId);
+    if (!found?.node.image) return;
+    found.node.image = null;
+    mutate(newRoot);
+    showToast('Image removed from node');
+  }, [mutate, root, showToast]);
+
+  // Ctrl+V on the canvas puts a copied picture on the selected node. Ignored
+  // while a dialog or an inline editor owns the keyboard, where a paste means
+  // text.
+  useEffect(() => {
+    const handler = (e: ClipboardEvent) => {
+      if (notesOpen || editingId) return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      const file = Array.from(e.clipboardData?.items ?? [])
+        .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+        .map((item) => item.getAsFile())
+        .find((value): value is File => Boolean(value));
+      if (!file) return;
+      e.preventDefault();
+      void attachNodeImage(selectedId, file);
+    };
+    window.addEventListener('paste', handler);
+    return () => window.removeEventListener('paste', handler);
+  }, [attachNodeImage, editingId, notesOpen, selectedId]);
+
+  const onDragLeaveSvg = useCallback((e: React.DragEvent<SVGSVGElement>) => {
+    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+    setDropTargetId(null);
+  }, []);
+
+  const onDropSvg = useCallback(async (e: React.DragEvent<SVGSVGElement>) => {
+    if (!onNodeFileDrop || e.dataTransfer.files.length === 0) return;
+    e.preventDefault();
+    const nodeId = getNodeIdAtClientPoint(e.clientX, e.clientY);
+    setDropTargetId(null);
+    if (!nodeId) return;
+
+    // Dropping a single picture onto a node shows it on the node. It is still
+    // attached as a file, so nothing is lost either way — the difference is a
+    // glyph on the canvas instead of a link appended to the node's text.
+    const dropped = Array.from(e.dataTransfer.files);
+    const found = findNode(root, nodeId);
+    if (dropped.length === 1 && dropped[0].type.startsWith('image/') && !found?.node.image?.thumb) {
+      setSelectedId(nodeId);
+      await attachNodeImage(nodeId, dropped[0]);
+      return;
+    }
+
+    setFileDropBusyNodeId(nodeId);
+    try {
+      const refs = await onNodeFileDrop(nodeId, Array.from(e.dataTransfer.files));
+      if (refs.length === 0) return;
+
+      const newRoot = cloneTree(root);
+      const found = findNode(newRoot, nodeId);
+      if (found) {
+        found.node.attachments = [...(found.node.attachments ?? []), ...refs];
+        found.node.text = appendAttachmentMarkdownLinks(found.node.text, refs);
+        mutate(newRoot);
+        setSelectedId(nodeId);
+      }
+      showToast(`${refs.length} file${refs.length === 1 ? '' : 's'} attached`);
+    } finally {
+      setFileDropBusyNodeId(null);
+    }
+  }, [attachNodeImage, getNodeIdAtClientPoint, mutate, onNodeFileDrop, root, showToast]);
+
+  const attachFilesToSelectedNode = useCallback(async (files: FileList | File[] | null) => {
+    if (!onNodeFileDrop || !files || files.length === 0 || selectedId === 'root') return;
+
+    const selectedFiles = Array.from(files);
+    setFileDropBusyNodeId(selectedId);
+    try {
+      const refs = await onNodeFileDrop(selectedId, selectedFiles);
+      if (refs.length === 0) {
+        showToast('Attachment upload failed');
+        return;
+      }
+
+      const newRoot = cloneTree(root);
+      const found = findNode(newRoot, selectedId);
+      if (found) {
+        found.node.attachments = [...(found.node.attachments ?? []), ...refs];
+        found.node.text = appendAttachmentMarkdownLinks(found.node.text, refs);
+        mutate(newRoot);
+      }
+      showToast(`${refs.length} file${refs.length === 1 ? '' : 's'} attached`);
+    } catch {
+      showToast('Attachment upload failed');
+    } finally {
+      setFileDropBusyNodeId(null);
+    }
+  }, [mutate, onNodeFileDrop, root, selectedId, showToast]);
+
+  const startRecording = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '';
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      recordingChunksRef.current = [];
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) recordingChunksRef.current.push(e.data); };
+      recorder.onstop = () => {
+        const blob = new Blob(recordingChunksRef.current, { type: mimeType || 'audio/webm' });
+        setRecordingBlob(blob);
+        setRecordingState('recorded');
+        stream.getTracks().forEach(t => t.stop());
+        if (recordingTimerRef.current) { clearInterval(recordingTimerRef.current); recordingTimerRef.current = null; }
+      };
+      recorder.start();
+      mediaRecorderRef.current = recorder;
+      setRecordingState('recording');
+      setRecordingSeconds(0);
+      recordingTimerRef.current = setInterval(() => setRecordingSeconds(s => s + 1), 1000);
+    } catch {
+      showToast('Microphone permission denied');
+    }
+  }, [showToast]);
+
+  const stopRecording = useCallback(() => {
+    mediaRecorderRef.current?.stop();
+    if (recordingTimerRef.current) { clearInterval(recordingTimerRef.current); recordingTimerRef.current = null; }
+  }, []);
+
+  const discardRecording = useCallback(() => {
+    if (mediaRecorderRef.current?.state === 'recording') mediaRecorderRef.current.stop();
+    if (recordingTimerRef.current) { clearInterval(recordingTimerRef.current); recordingTimerRef.current = null; }
+    setRecordingState('idle');
+    setRecordingBlob(null);
+    setRecordingName('');
+    setRecordingSeconds(0);
+  }, []);
+
+  const saveRecording = useCallback(async () => {
+    if (!recordingBlob) return;
+    const name = recordingName.trim() || `Voice note ${new Date().toLocaleString()}`;
+    const ext = recordingBlob.type.includes('webm') ? 'webm' : 'm4a';
+    const file = new File([recordingBlob], `${name}.${ext}`, { type: recordingBlob.type });
+    setMobileRecordingOpen(false);
+    setRecordingState('idle');
+    setRecordingBlob(null);
+    setRecordingName('');
+    setRecordingSeconds(0);
+    await attachFilesToSelectedNode([file]);
+  }, [attachFilesToSelectedNode, recordingBlob, recordingName]);
+
+  const onMouseUpSvg = useCallback(() => {
+    // Finish rectangle selection
+    if (rectSel) {
+      const ids = nodesInMarquee(layout, rectSel);
+      setMultiSelect(ids);
+      if (ids.size > 0) {
+        const first = [...ids][0];
+        setSelectedId(first);
+      }
+      setRectSel(null);
+      return;
+    }
+    isPanning.current = false;
+    if (svgRef.current) svgRef.current.style.cursor = '';
+    if (dragRef.current && dragRef.current.moved) {
+      const d = dragRef.current;
+      const dx = (d.currentX - d.origX);
+      const dy = (d.currentY - d.origY);
+      // Clear visual transforms on all dragged elements
+      const el = svgRef.current?.querySelector(`[data-node="${d.nodeId}"]`) as SVGGElement | null;
+      if (el) el.style.transform = '';
+      for (const id of multiSelect) {
+        if (id === d.nodeId) continue;
+        const mel = svgRef.current?.querySelector(`[data-node="${id}"]`) as SVGGElement | null;
+        if (mel) mel.style.transform = '';
+      }
+      if (dropTargetId && dropTargetId !== d.nodeId && multiSelect.size <= 1) {
+        reparentNode(d.nodeId, dropTargetId);
+      } else {
+        // Save new positions for all multi-selected nodes (or just the one)
+        const newRoot = cloneTree(root);
+        const idsToMove = multiSelect.size > 0 ? multiSelect : new Set([d.nodeId]);
+        for (const id of idsToMove) {
+          const found = findNode(newRoot, id);
+          if (!found) continue;
+          const box = layout[id];
+          if (box) {
+            found.node.customX = box.x + dx;
+            found.node.customY = box.y + dy;
+          }
+        }
+        mutate(newRoot);
+      }
+    }
+    dragRef.current = null;
+    setIsDragging(false);
+    setDropTargetId(null);
+  }, [rectSel, layout, dropTargetId, reparentNode, root, mutate, multiSelect]);
+
+  // ── Fit view ──────────────────────────────────────────────────────────────
+  const fitView = useCallback(() => {
+    if (!containerRef.current || Object.keys(layout).length === 0) return;
+    const all = Object.values(layout);
+    const minX = Math.min(...all.map((n) => n.x));
+    const maxX = Math.max(...all.map((n) => n.x + n.w));
+    const minY = Math.min(...all.map((n) => n.y));
+    const maxY = Math.max(...all.map((n) => n.y + n.h));
+    const pad = 60;
+    const { width, height } = containerRef.current.getBoundingClientRect();
+    const scaleX = (width - pad * 2) / (maxX - minX || 1);
+    const scaleY = (height - pad * 2) / (maxY - minY || 1);
+    const z = Math.min(Math.min(scaleX, scaleY), 2);
+    setZoom(z);
+    setPan({ x: pad - minX * z, y: pad - minY * z });
+  }, [layout]);
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  NATIVE MENU BRIDGE
+  //
+  //  The macOS/Windows/Linux app menu (desktop/src-tauri/src/lib.rs) has no
+  //  view into React state, so a click just emits `menu:command` with a
+  //  registry-style action id and lets the webview do the real work — the
+  //  same ids and handlers a keyboard shortcut would use. `latestMenuAction`
+  //  is refreshed every render (no dep array) so the listener below, set up
+  //  once on mount, always dispatches against current state without tearing
+  //  down and resubscribing to the Tauri event on every keystroke.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  const latestMenuAction = useRef<(id: string) => void>(() => {});
+  useEffect(() => {
+    latestMenuAction.current = (id: string) => {
+      switch (id) {
+        case 'file.save':
+          handleSave();
+          showToast(`${formatShortcut('file.save', keyboardLayout)} — Save`);
+          break;
+        case 'file.new':
+          onNewDocument?.();
+          break;
+        case 'file.open':
+          onOpenDocument?.();
+          break;
+        case 'file.saveAs':
+          onSaveAsDocument?.();
+          break;
+        case 'node.attachFile':
+          nodeAttachmentInputRef.current?.click();
+          break;
+        case 'node.addChild':
+          addChild(selectedId);
+          break;
+        case 'node.addSibling':
+          addSibling(selectedId);
+          break;
+        case 'node.rename': {
+          const f = findNode(root, selectedId);
+          if (f) startEditing(f.node);
+          break;
+        }
+        case 'node.notesToggle':
+          setNotesOpen((v) => { if (!v) openNotes(selectedId); return !v; });
+          break;
+        case 'node.delete':
+          hasBulk ? bulkDelete() : deleteNode(selectedId);
+          break;
+        case 'edit.undo':
+          undo();
+          break;
+        case 'edit.redo':
+          redo();
+          break;
+        case 'find.search':
+          setSearchOpen(true);
+          setTimeout(() => searchRef.current?.focus(), 50);
+          break;
+        case 'find.shortcuts':
+          setShowShortcuts((v) => !v);
+          break;
+        case 'view.leanMode':
+          setDensityPreset(densityPreset === 'lean' ? 'standard' : 'lean');
+          break;
+        case 'view.colourTray':
+          setColourTray(!colourTrayEnabled);
+          break;
+        case 'view.iconTray':
+          setIconTray(!iconTrayEnabled);
+          break;
+        case 'view.statusBar':
+          setStatusBarOverride(!statusBarVisible);
+          break;
+        case 'view.zoomIn':
+          setZoom((z) => Math.min(3, z + 0.15));
+          break;
+        case 'view.zoomOut':
+          setZoom((z) => Math.max(0.3, z - 0.15));
+          break;
+        case 'view.zoomFit':
+          fitView();
+          break;
+        case 'view.focusMode':
+          setFocusMode((v) => { if (!v) setFocusAnchorId(selectedId); return !v; });
+          break;
+        default:
+          break;
+      }
+    };
+  });
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event');
+        const fn = await listen<string>('menu:command', (event) => {
+          latestMenuAction.current(event.payload);
+        });
+        if (cancelled) fn();
+        else unlisten = fn;
+      } catch {
+        // Not running inside Tauri (e.g. a plain browser preview) — no menu to bridge.
+      }
+    })();
+    return () => { cancelled = true; unlisten?.(); };
+  }, []);
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  SVG RENDERING
+  // ══════════════════════════════════════════════════════════════════════════
+
+  const renderConnections = useCallback((node: MindMapTreeNode): JSX.Element[] => {
+    const paths: JSX.Element[] = [];
+    if (node.collapsed) return paths;
+    const pBox = layout[node.id];
+    if (!pBox) return paths;
+    for (const ch of node.children) {
+      if (node.id === 'root') {
+        const isLeftSide = ch.side === 'left';
+        if (isLeftSide && rootLeftCollapsed) continue;
+        if (!isLeftSide && rootRightCollapsed) continue;
+      }
+      const cBox = layout[ch.id];
+      if (!cBox) continue;
+      const parentCenterX = pBox.x + pBox.w / 2;
+      const childCenterX = cBox.x + cBox.w / 2;
+      const childOnLeft = childCenterX < parentCenterX;
+      const x1 = childOnLeft ? pBox.x : pBox.x + pBox.w;
+      const y1 = pBox.y + pBox.h / 2;
+      const x2 = childOnLeft ? cBox.x + cBox.w : cBox.x;
+      const y2 = cBox.y + cBox.h / 2;
+      // A node's colour paints only the line coming *into* it. The lines
+      // going out to its children stay on the default until a child sets a
+      // colour of its own — colour no longer cascades down the subtree.
+      const branchColor = ch.color;
+      const faded = focusMode && focusedIds.size > 0 && !focusedIds.has(node.id) && !focusedIds.has(ch.id);
+      paths.push(
+        <path
+          key={`c-${node.id}-${ch.id}`}
+          d={bezierPath(x1, y1, x2, y2)}
+          className={`mm-connection${faded ? ' mm-faded' : ''}`}
+          fill="none"
+          stroke={branchColor ?? 'var(--mm-connection, #7C3AED)'}
+          style={{ stroke: branchColor ?? 'var(--mm-connection, #7C3AED)' }}
+          strokeWidth={2}
+          strokeLinecap="round"
+          opacity={faded ? 0.2 : 1}
+        />,
+      );
+      paths.push(...renderConnections(ch));
+    }
+    return paths;
+  }, [layout, focusMode, focusedIds, rootLeftCollapsed, rootRightCollapsed]);
+
+  /** Opens the full-resolution original behind a node's glyph. */
+  const openNodeImage = useCallback(async (node: MindMapTreeNode) => {
+    const attachmentId = node.image?.attachment_id;
+    if (!attachmentId) {
+      showToast('This picture has no full-size copy stored');
+      return;
+    }
+    const attachment = getNodeAttachments(node.id, node.attachments)
+      .find((item) => item.attachment_id === attachmentId);
+    if (!attachment) {
+      // Expected after restoring a version whose original was deleted since.
+      // The glyph still renders; only click-through cannot work.
+      showToast('The full-size original is no longer available');
+      return;
+    }
+    await previewOrOpenAttachment(attachment);
+  }, [getNodeAttachments, previewOrOpenAttachment, showToast]);
+
+  useEffect(() => () => {
+    if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+  }, []);
+
+  const recordingBlobUrl = useMemo(() => {
+    if (!recordingBlob) return null;
+    return URL.createObjectURL(recordingBlob);
+  }, [recordingBlob]);
+
+  useEffect(() => () => {
+    if (recordingBlobUrl) URL.revokeObjectURL(recordingBlobUrl);
+  }, [recordingBlobUrl]);
+
+  const cancelHoverPopupClose = useCallback(() => {
+    if (!hoverPopupCloseTimerRef.current) return;
+    clearTimeout(hoverPopupCloseTimerRef.current);
+    hoverPopupCloseTimerRef.current = null;
+  }, []);
+
+  const scheduleHoverPopupClose = useCallback((nodeId?: string) => {
+    cancelHoverPopupClose();
+    hoverPopupCloseTimerRef.current = setTimeout(() => {
+      if (!hoveringNotePopup) {
+        setHoveredNoteNodeId((current) => {
+          if (!nodeId) return null;
+          return current === nodeId ? null : current;
+        });
+      }
+      hoverPopupCloseTimerRef.current = null;
+    }, 140);
+  }, [cancelHoverPopupClose, hoveringNotePopup]);
+
+  /**
+   * What the body band can do. Grouped rather than sprayed: a band that takes
+   * its callbacks one prop at a time grows a signature nobody reads.
+   */
+  const bodyActions: BodyActions = useMemo(
+    () => ({ onToggleCheckbox: toggleCheckbox, onCycleProgress: cycleProgress }),
+    [toggleCheckbox, cycleProgress],
+  );
+
+  const renderNodes = useCallback((node: MindMapTreeNode, depth = 0): JSX.Element[] => {
+    const box = layout[node.id];
+    if (!box) return [];
+    const isRoot = depth === 0;
+    const isSelected = node.id === selectedId;
+    const isEditing = node.id === editingId;
+    const isDrop = node.id === dropTargetId;
+    const ownColor = node.color ?? null;
+    // Only the node's own explicit color fills the bubble — and, in
+    // renderConnections, the one line coming into it. Nothing is inherited.
+    const rx = isRoot ? 18 : 8;
+
+    const fillColor = ownColor ?? (isRoot ? 'var(--mm-root-fill)' : 'var(--mm-node-fill)');
+    // Selection has to win over the node's own colour and over the root's
+    // stroke: both used to be checked first, so a coloured node drew its
+    // border in the same colour as its fill and selecting it showed nothing.
+    const strokeColor = isDrop
+      ? '#22c55e'
+      : isSelected
+        ? 'var(--accent)'
+        : (ownColor ?? (isRoot ? 'var(--mm-root-stroke)' : 'var(--mm-node-stroke)'));
+    const textColor = ownColor ? '#ffffff' : (isRoot ? 'var(--mm-root-text)' : 'var(--mm-node-text)');
+
+    const fontSize = isRoot ? 15 : 13;
+    const fontWeight = isRoot ? 'bold' : 'normal';
+
+    // What the node is made of, and where each band starts, both come from the
+    // entry the layout produced. Working either out again here is how the
+    // renderer and the layout used to disagree — over whitespace-only notes,
+    // and over attachments held outside the tree — and draw an 18px strip in
+    // space nothing had reserved.
+    const parts = box.parts;
+    const geom = nodeGeometry(box, parts);
+    const nodeImage = node.image?.thumb ? node.image : null;
+    const visual: NodeVisual = { ownColor, fillColor, strokeColor, textColor, fontSize, fontWeight };
+    const checkedInfo = (node.children.length > 0 && node.checked != null) ? countChecked(node) : null;
+
+    const isMulti = multiSelect.has(node.id);
+
+    const elems: JSX.Element[] = [
+      <g key={node.id} data-node={node.id}
+        className={`mm-node-group${isSelected ? ' mm-selected' : ''}${isMulti ? ' mm-multi-selected' : ''}${isDrop ? ' mm-drop-target' : ''}${focusMode && focusedIds.size > 0 && !focusedIds.has(node.id) ? ' mm-faded' : ''}`}
+        style={{ cursor: isDragging ? 'grabbing' : 'pointer' }}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (e.ctrlKey || e.metaKey) {
+            setMultiSelect((prev) => { const s = new Set(prev); if (s.has(node.id)) s.delete(node.id); else s.add(node.id); return s; });
+          } else {
+            setMultiSelect(new Set());
+          }
+          setSelectedId(node.id); setShowColorPicker(false); setContextMenu(null);
+        }}
+        onDoubleClick={(e) => { e.stopPropagation(); setSelectedId(node.id); startEditing(node); }}
+        onMouseEnter={() => {
+          if (!node.notes?.trim()) return;
+          cancelHoverPopupClose();
+          setHoveredNoteNodeId(node.id);
+        }}
+        onMouseLeave={() => {
+          scheduleHoverPopupClose(node.id);
+        }}
+        onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setSelectedId(node.id); setContextMenu({ x: e.clientX, y: e.clientY, nodeId: node.id }); }}
+        onMouseDown={(e) => {
+          if (e.button !== 0 || isEditing) return;
+          e.stopPropagation();
+          dragRef.current = { nodeId: node.id, startClientX: e.clientX, startClientY: e.clientY, origX: box.x, origY: box.y, currentX: box.x, currentY: box.y, moved: false };
+        }}
+      >
+        {parts.hasDate && <DateBadge box={box} node={node} />}
+
+        <rect x={box.x} y={box.y} width={box.w} height={box.h} rx={rx} ry={rx} fill={fillColor} stroke={strokeColor}
+          strokeWidth={isSelected ? 2.5 : isDrop ? 3 : 1.5} className={isSelected ? 'mm-node-selected' : ''} />
+
+        <MetaBand box={box} geom={geom} parts={parts} visual={visual} />
+
+        {nodeImage && (
+          <ImageBand box={box} geom={geom} image={nodeImage} onOpen={() => { setSelectedId(node.id); void openNodeImage(node); }} />
+        )}
+
+        <TagBand box={box} geom={geom} parts={parts} visual={visual} userLabels={userLabels} />
+
+        <BodyBand
+          box={box}
+          geom={geom}
+          parts={parts}
+          visual={visual}
+          node={node}
+          actions={bodyActions}
+          isSearchHit={searchResults.includes(node.id)}
+          checkedInfo={checkedInfo}
+          editor={isEditing ? (
+            <foreignObject x={box.x + 2} y={geom.bodyTopY + 2} width={box.w - 4} height={Math.max(0, geom.bodyH - 4)}>
+              <textarea ref={editRef} value={editText} onChange={(e) => setEditText(e.target.value)} onBlur={commitEdit}
+                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); commitEdit(); } if (e.key === 'Escape') cancelEdit(); e.stopPropagation(); }}
+                className="mm-edit-textarea" style={{ color: textColor, background: fillColor }} />
+            </foreignObject>
+          ) : null}
+        />
+
+        <FooterBand box={box} geom={geom} parts={parts} node={node} visual={visual} onOpenLink={onOpenFileLink} />
+
+        <CollapseControls
+          box={box}
+          node={node}
+          // The old branch keyed the fold bubbles off the id, not the depth.
+          // They agree today; keep the one that was there.
+          isRoot={node.id === 'root'}
+          rootLeftCollapsed={rootLeftCollapsed}
+          rootRightCollapsed={rootRightCollapsed}
+          onToggleCollapse={toggleCollapse}
+          onToggleRootLeft={() => setRootLeftCollapsed((current) => !current)}
+          onToggleRootRight={() => setRootRightCollapsed((current) => !current)}
+        />
+      </g>,
+    ];
+
+    if (!node.collapsed) {
+      for (const ch of node.children) {
+        if (node.id === 'root') {
+          const isLeftSide = ch.side === 'left';
+          if (isLeftSide && rootLeftCollapsed) continue;
+          if (!isLeftSide && rootRightCollapsed) continue;
+        }
+        elems.push(...renderNodes(ch, depth + 1));
+      }
+    }
+    return elems;
+    }, [layout, selectedId, multiSelect, editingId, editText, dropTargetId, isDragging, searchResults,
+      attachmentPreviewUrls, cancelHoverPopupClose, scheduleHoverPopupClose, commitEdit, cancelEdit, getNodeAttachments, onOpenNodeAttachment, toggleCollapse, toggleCheckbox,
+      focusMode, focusedIds, rootLeftCollapsed, rootRightCollapsed, onOpenFileLink]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  const selNode = findNode(root, selectedId)?.node;
+
+  const traysByPosition = useMemo(() => {
+    const result: Record<TrayPosition, Array<'colour' | 'icon'>> = { top: [], bottom: [], left: [], right: [] };
+    if (colourTrayEnabled) result[colourTrayPosition].push('colour');
+    if (iconTrayEnabled) result[iconTrayPosition].push('icon');
+    return result;
+  }, [colourTrayEnabled, colourTrayPosition, iconTrayEnabled, iconTrayPosition]);
+  const hasAnyTray = colourTrayEnabled || iconTrayEnabled;
+
+  const selectedNodeAttachments = selNode ? getNodeAttachments(selNode.id, selNode.attachments) : [];
+  const notesReferencedAttachments = useMemo(() => {
+    const ids = Array.from((notesText || '').matchAll(/attachment:\/\/([0-9a-fA-F-]{12,})/g)).map((match) => match[1]);
+    const resolved: NodeAttachmentRef[] = [];
+    const seen = new Set<string>();
+    for (const id of ids) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const attachment = attachmentById.get(id);
+      if (attachment) resolved.push(attachment);
+    }
+    return resolved;
+  }, [attachmentById, notesText]);
+  const notesDialogAttachments = selectedNodeAttachments.length > 0 ? selectedNodeAttachments : notesReferencedAttachments;
+  const selNodeAttachmentCount = notesDialogAttachments.length;
+  const selNodeAttachmentLabel = selNodeAttachmentCount === 1 ? '1 file' : `${selNodeAttachmentCount} files`;
+  const selNodeAttachmentNames = notesDialogAttachments.slice(0, 3).map((attachment) => attachment.name).join(', ');
+  const hoveredNoteData = useMemo(() => {
+    if (!hoveredNoteNodeId) return null;
+    const found = findNode(root, hoveredNoteNodeId);
+    const box = layout[hoveredNoteNodeId];
+    if (!found || !box || !found.node.notes?.trim()) return null;
+    const x = pan.x + (box.x + box.w + 10) * zoom;
+    const y = pan.y + (box.y + Math.min(20, box.h / 2)) * zoom;
+    return {
+      x,
+      y,
+      title: getVisibleNodeTextLines(found.node.text)[0] || 'Note',
+      html: renderNotesPreviewHtml(found.node.notes.trim()),
+    };
+  }, [hoveredNoteNodeId, layout, pan.x, pan.y, renderNotesPreviewHtml, root, zoom]);
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  RENDER
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // Shared between the nav row (lean/standard) and the Home tab's File
+  // group (large) — see the toolbar JSX below.
+  const backBtn = onBack && (
+    <button className="mm-btn" data-label="Back" data-shortcut={formatButtonShortcut('nav.back', keyboardLayout)} onClick={onBack} title={`Back to files (${formatShortcut('nav.back', keyboardLayout)})`} style={{ flexShrink: 0 }}>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7"/></svg>
+    </button>
+  );
+  const saveBtn = (
+    <button
+      className={`mm-btn mm-save-btn${isDirty ? ' mm-save-btn--dirty' : ''}${saving ? ' mm-save-btn--saving' : ''}${error ? ' mm-save-btn--err' : ''}${saveMsg ? ' mm-save-btn--ok' : ''}`}
+      data-label="Save"
+      data-shortcut={formatButtonShortcut('file.save', keyboardLayout)}
+      onClick={handleSave}
+      disabled={saving || (!isDirty && !error)}
+      title={saving ? 'Saving…' : error ? error : isDirty ? `Unsaved changes — click to save (${formatShortcut('file.save', keyboardLayout)})` : 'All changes saved'}
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z" />
+        <polyline points="17 21 17 13 7 13 7 21" />
+        <polyline points="7 3 7 8 15 8" />
+      </svg>
+    </button>
+  );
+  const themeBtn = (
+    <button
+      className="mm-btn"
+      data-label="Theme"
+      onClick={toggleThemeMode}
+      title={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+    >
+      {themeMode === 'dark' ? (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      ) : (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      )}
+    </button>
+  );
+
+  return (
+    <div className="mm-root" data-density={densityPreset} data-toolbar-labels={toolbarLabels} data-shortcuts={buttonShortcutsVisible} ref={containerRef}>
+      {/* ── Mobile top bar ──────────────────────────────────────────────── */}
+      {isMobile && (
+        <div className="mm-mobile-topbar">
+          <div className="mm-mobile-topbar-title">
+            <span>{title || 'Untitled'}</span>
+            {versionLabel && <span className="mm-mobile-topbar-version" title={versionTooltip}>{versionLabel}</span>}
+          </div>
+          <div className="mm-mobile-topbar-actions">
+            <button
+              className={`mm-btn mm-save-btn${isDirty ? ' mm-save-btn--dirty' : ''}${saving ? ' mm-save-btn--saving' : ''}${error ? ' mm-save-btn--err' : ''}${saveMsg ? ' mm-save-btn--ok' : ''}`}
+              onClick={handleSave}
+              disabled={saving || (!isDirty && !error)}
+              title={saving ? 'Saving…' : error ? error : isDirty ? `Unsaved changes` : 'All saved'}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z" />
+                <polyline points="17 21 17 13 7 13 7 21" />
+                <polyline points="7 3 7 8 15 8" />
+              </svg>
+            </button>
+            <button className="mm-btn" onClick={toggleThemeMode} title={themeMode === 'dark' ? 'Light mode' : 'Dark mode'}>
+              {themeMode === 'dark' ? (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+              ) : (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+              )}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Toolbar ─────────────────────────────────────────────────────── */}
+      {!isMobile && <div className="mm-toolbar">
+        <div className="mm-toolbar-nav">
+          <div className="mm-toolbar-left">
+            {backBtn}
+            {saveBtn}
+          </div>
+          <div className="mm-toolbar-center">
+            <input ref={titleInputRef} className="mm-title-input" value={title} onChange={(e) => onTitleChange(e.target.value)} placeholder="Untitled" style={{ textAlign: 'center' }} />
+            {onRenameTitle && titleChanged && (
+              <button className="mm-btn" onClick={onRenameTitle} disabled={renamingTitle} title="Rename vault (title only)"
+                style={{ padding: '0 8px', flexShrink: 0, color: 'var(--accent)', border: '1px solid var(--accent)' }}>{renamingTitle ? '…' : 'Rename'}</button>
+            )}
+          </div>
+          {densityPreset === 'large' && (
+            <div className="mm-toolbar-nav-end">
+              {themeBtn}
+              <ThemePanel toolbarButton />
+            </div>
+          )}
+        </div>
+        {densityPreset === 'large' && (
+          <div className="mm-ribbon-tabs" role="tablist" aria-label="Toolbar tabs">
+            {([['home', 'Home'], ['insert', 'Insert'], ['view', 'View'], ['export', 'Export']] as const).map(([tab, label]) => (
+              <button
+                key={tab}
+                role="tab"
+                type="button"
+                aria-selected={activeRibbonTab === tab}
+                className={`mm-ribbon-tab${activeRibbonTab === tab ? ' mm-ribbon-tab--active' : ''}`}
+                onClick={() => setActiveRibbonTab(tab)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="mm-toolbar-right">
+          <input
+            ref={nodeAttachmentInputRef}
+            type="file"
+            multiple
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              void attachFilesToSelectedNode(e.currentTarget.files);
+              e.currentTarget.value = '';
+            }}
+          />
+          <input
+            ref={nodeImageInputRef}
+            type="file"
+            accept="image/*"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const file = e.currentTarget.files?.[0];
+              const target = nodeImageTargetRef.current ?? selectedId;
+              if (file) void attachNodeImage(target, file);
+              e.currentTarget.value = '';
+            }}
+          />
+          {(densityPreset !== 'large' || activeRibbonTab === 'home') && (
+          <div className="mm-toolbar-group" data-ribbon-tab="home">
+            <span className="mm-toolbar-group-label">Edit</span>
+            <div className="mm-toolbar-group-btns">
+              <button className="mm-btn mm-essential" data-label="Undo" data-shortcut={formatButtonShortcut('edit.undo', keyboardLayout)} onClick={undo} title={`Undo (${formatShortcut('edit.undo', keyboardLayout)})`} disabled={!history.canUndo}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a6 6 0 010 12H9m-6-12l4-4m-4 4l4 4"/></svg></button>
+              <button className="mm-btn mm-essential" data-label="Redo" data-shortcut={formatButtonShortcut('edit.redo', keyboardLayout)} onClick={redo} title={`Redo (${formatShortcut('edit.redo', keyboardLayout)})`} disabled={!history.canRedo}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 10H11a6 6 0 000 12h4m6-12l-4-4m4 4l-4 4"/></svg></button>
+            </div>
+          </div>
+          )}
+          {(densityPreset !== 'large' || activeRibbonTab === 'home') && (
+          <div className="mm-toolbar-group" data-ribbon-tab="home">
+            <span className="mm-toolbar-group-label">Node</span>
+            <div className="mm-toolbar-group-btns">
+              <button className="mm-btn mm-essential" data-label="Child" data-shortcut={formatButtonShortcut('node.addChild', keyboardLayout)} onClick={() => addChild(selectedId)} title={`Add child (${formatShortcut('node.addChild', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4"/></svg></button>
+              <button className="mm-btn mm-essential" data-label="Sibling" data-shortcut={formatButtonShortcut('node.addSibling', keyboardLayout)} onClick={() => addSibling(selectedId)} title={`Add sibling (${formatShortcut('node.addSibling', keyboardLayout)})`} disabled={selectedId === 'root'}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13 5H7m0 0v12m0-12l-3 3m3-3l3 3"/></svg></button>
+              <button className="mm-btn mm-btn--danger mm-essential" data-label="Delete" data-shortcut={formatButtonShortcut('node.delete', keyboardLayout)} onClick={() => hasBulk ? bulkDelete() : deleteNode(selectedId)} title={`Delete (${formatShortcut('node.delete', keyboardLayout)})`} disabled={selectedId === 'root' && !hasBulk}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button>
+            </div>
+          </div>
+          )}
+          {(densityPreset !== 'large' || activeRibbonTab === 'home') && (
+          <div className="mm-toolbar-group" data-ribbon-tab="home">
+            <span className="mm-toolbar-group-label">Format</span>
+            <div className="mm-toolbar-group-btns">
+              <button className="mm-btn" data-label="Checkbox" data-shortcut={formatButtonShortcut('node.checkbox', keyboardLayout)} onClick={() => { hasBulk ? bulkToggleCheckbox() : toggleCheckbox(selectedId); }} title={`Checkbox (${formatShortcut('node.checkbox', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg></button>
+              <button className="mm-btn" data-label="Progress" data-shortcut={formatButtonShortcut('node.progress', keyboardLayout)} onClick={() => { hasBulk ? bulkCycleProgress() : cycleProgress(selectedId); }} title={`Progress (${formatShortcut('node.progress', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 017.07 17.07" strokeLinecap="round"/></svg></button>
+              <div style={{ position: 'relative' }}>
+                <button className="mm-btn mm-btn--color" data-label="Colour" data-shortcut={formatButtonShortcut('node.colour', keyboardLayout)} onClick={() => setShowColorPicker((v) => !v)} title={`Color (${formatShortcut('node.colour', keyboardLayout)})`} style={{ background: selNode?.color ?? 'transparent' }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"/></svg>
+                </button>
+                <MindMapColorPicker open={showColorPicker} currentColor={selNode?.color ?? null} onSelect={(c) => { hasBulk ? bulkSetColor(c) : setNodeColor(selectedId, c); setShowColorPicker(false); }} onClose={() => setShowColorPicker(false)} showToast={showToast} />
+              </div>
+              <div style={{ position: 'relative' }}>
+                <button className="mm-btn" data-label="Icons" data-shortcut={formatButtonShortcut('node.icons', keyboardLayout)} onClick={() => setShowIconPicker((v) => !v)} title={`Icons (${formatShortcut('node.icons', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg></button>
+                <MindMapIconPicker open={showIconPicker} currentIcons={selNode?.icons ?? []} onSelect={(name: string | null) => hasBulk ? bulkSetIcon(name) : setNodeIcon(selectedId, name)} onClose={() => setShowIconPicker(false)} showToast={showToast} />
+              </div>
+            </div>
+          </div>
+          )}
+          {(() => {
+            const notesBtn = (
+              <button
+                key="notes"
+                data-label="Notes"
+                data-shortcut={formatButtonShortcut('node.notesToggle', keyboardLayout)}
+                className={`mm-btn mm-btn--notes mm-essential${selNodeAttachmentCount > 0 ? ' mm-btn--notes-has-files' : ''}`}
+                onClick={() => { openNotes(selectedId); setNotesOpen(true); }}
+                title={selNodeAttachmentCount > 0 ? `Notes (${formatShortcut('node.notesToggle', keyboardLayout)}) · ${selNodeAttachmentLabel}${selNodeAttachmentNames ? `: ${selNodeAttachmentNames}` : ''}` : `Notes (${formatShortcut('node.notesToggle', keyboardLayout)})`}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+                {selNodeAttachmentCount > 0 && (
+                  <span className="mm-btn-notes-meta">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21.44 11.05l-9.19 9.19a6 6 0 11-8.49-8.49l9.2-9.19a4 4 0 015.65 5.66l-9.2 9.19a2 2 0 11-2.82-2.82l8.48-8.48"/></svg>
+                    <span>{selNodeAttachmentCount}</span>
+                  </span>
+                )}
+              </button>
+            );
+            const datesBtn = <button key="dates" className="mm-btn" data-label="Dates" data-shortcut={formatButtonShortcut('node.dates', keyboardLayout)} onClick={() => setShowDateDialog(true)} title={`Dates (${formatShortcut('node.dates', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></button>;
+            const tagsBtn = <button key="tags" className={`mm-btn${showTagDialog ? ' mm-btn--active' : ''}`} data-label="Tags" data-shortcut={formatButtonShortcut('node.labels', keyboardLayout)} onClick={() => setShowTagDialog((v) => !v)} title={`Tags (${formatShortcut('node.labels', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M7 7h.01M7 3h5l8.5 8.5a2 2 0 010 2.83l-5.17 5.17a2 2 0 01-2.83 0L3 10V5a2 2 0 012-2z"/></svg></button>;
+            const attachBtn = (
+              <button
+                key="attach"
+                className="mm-btn"
+                data-label="Attach"
+                data-shortcut={formatButtonShortcut('node.attachFile', keyboardLayout)}
+                // The same picker the F6 shortcut and the Node menu open. This
+                // once pointed at the image-only input, so the button accepted
+                // pictures and nothing else.
+                onClick={() => nodeAttachmentInputRef.current?.click()}
+                title={`Attach files to selected node (${formatShortcut('node.attachFile', keyboardLayout)})`}
+                disabled={!onNodeFileDrop || selectedId === 'root'}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21.44 11.05l-9.19 9.19a6 6 0 11-8.49-8.49l9.2-9.19a4 4 0 015.65 5.66l-9.2 9.19a2 2 0 11-2.82-2.82l8.48-8.48"/></svg>
+              </button>
+            );
+            const imageBtn = (
+              <button
+                key="image"
+                className="mm-btn"
+                data-label="Image"
+                data-shortcut={formatButtonShortcut('node.addImage', keyboardLayout)}
+                onClick={() => {
+                  nodeImageTargetRef.current = selectedId;
+                  nodeImageInputRef.current?.click();
+                }}
+                title={`Add a picture to the selected node (${formatShortcut('node.addImage', keyboardLayout)})`}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path strokeLinecap="round" strokeLinejoin="round" d="M21 15l-5-5L5 21L21 15z"/></svg>
+              </button>
+            );
+            // Linking lives in the Insert section next to Notes and Image:
+            // a vault link and a plain URL are the same gesture to a user,
+            // they just point at different things.
+            const linkBtn = onOpenFileLink ? (
+              <button
+                key="link"
+                className={`mm-btn${selNode?.link?.path ? ' mm-btn--active' : ''}`}
+                data-label="Link"
+                data-shortcut={formatButtonShortcut('node.linkFile', keyboardLayout)}
+                onClick={() => openFileLinkPicker(selectedId)}
+                title={selNode?.link?.label
+                  ? `Linked to ${selNode.link.label} (${formatShortcut('node.linkFile', keyboardLayout)})`
+                  : `Link this node to another file (${formatShortcut('node.linkFile', keyboardLayout)})`}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinejoin="round"><path d="M 3 5 L 9 3 L 15 6 L 21 4 L 21 19 L 15 21 L 9 18 L 3 20 Z"/><path d="M 9 3 L 9 18 M 15 6 L 15 21"/></svg>
+              </button>
+            ) : null;
+            const urlBtn = (
+              <button
+                key="url"
+                className={`mm-btn${showUrlDialog ? ' mm-btn--active' : ''}`}
+                data-label="URL"
+                data-shortcut={formatButtonShortcut('node.url', keyboardLayout)}
+                onClick={() => setShowUrlDialog((v) => !v)}
+                title={`Add a web link to the selected node (${formatShortcut('node.url', keyboardLayout)})`}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path strokeLinecap="round" strokeLinejoin="round" d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
+              </button>
+            );
+            const alignBtn =<button key="align" className="mm-btn" data-label="Align" data-shortcut={formatButtonShortcut('node.autoAlign', keyboardLayout)} onClick={() => autoAlignSubtree(selectedId)} title={`${selectedId === 'root' ? 'Auto-align all nodes' : 'Auto-align subtree'} (${formatShortcut('node.autoAlign', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 6h18M3 12h12M3 18h8"/></svg></button>;
+            const focusBtn = <button key="focus" className={`mm-btn${focusMode ? ' mm-btn--active' : ''}`} data-label="Focus" data-shortcut={formatButtonShortcut('view.focusMode', keyboardLayout)} onClick={() => { setFocusMode((v) => { if (!v) setFocusAnchorId(selectedId); return !v; }); }} title={`Focus mode (${formatShortcut('view.focusMode', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="3"/><path d="M12 1v2m0 18v2m8.66-17.66l-1.41 1.41M4.75 19.25l-1.41 1.41M23 12h-2M3 12H1m17.66 7.66l-1.41-1.41M4.75 4.75L3.34 3.34"/></svg></button>;
+            const searchBtn = <button key="search" className="mm-btn mm-essential" data-label="Search" data-shortcut={formatButtonShortcut('find.search', keyboardLayout)} onClick={() => { setSearchOpen(true); setTimeout(() => searchRef.current?.focus(), 50); }} title={`Search (${formatShortcut('find.search', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>;
+            const shortcutsBtn = <button key="shortcuts" className="mm-btn" data-label="Shortcuts" data-shortcut={formatButtonShortcut('find.shortcuts', keyboardLayout)} onClick={() => setShowShortcuts((v) => !v)} title={`Shortcuts (${formatShortcut('find.shortcuts', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg></button>;
+            const zoomGroup = (densityPreset !== 'large' || activeRibbonTab === 'view') && toolbarGroup('Zoom', <>
+              <button className="mm-btn" data-label="Zoom in" data-shortcut={formatButtonShortcut('view.zoomIn', keyboardLayout)} onClick={() => setZoom((z) => Math.min(3, z + 0.15))} title={`Zoom in (${formatShortcut('view.zoomIn', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="11" cy="11" r="8"/><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M11 8v6m-3-3h6"/></svg></button>
+              <button className="mm-btn" data-label="Zoom out" data-shortcut={formatButtonShortcut('view.zoomOut', keyboardLayout)} onClick={() => setZoom((z) => Math.max(0.3, z - 0.15))} title={`Zoom out (${formatShortcut('view.zoomOut', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="11" cy="11" r="8"/><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M8 11h6"/></svg></button>
+              <button className="mm-btn" data-label="Fit" data-shortcut={formatButtonShortcut('view.zoomFit', keyboardLayout)} onClick={fitView} title={`Fit view (${formatShortcut('view.zoomFit', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5"/></svg></button>
+            </>, 'view');
+            const outputGroup = onExport && (densityPreset !== 'large' || activeRibbonTab === 'export') && toolbarGroup('Output', (
+              <div style={{ position: 'relative' }}>
+                <button className="mm-btn" data-label="Export" onClick={() => setShowExportMenu((v) => !v)} title="Export">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                </button>
+                {showExportMenu && (
+                  <div
+                    ref={exportMenuRef}
+                    style={{ position: 'absolute', ...(exportMenuAlign === 'left' ? { left: 0 } : { right: 0 }), top: '100%', zIndex: 300, background: 'var(--mm-node-fill, #1e293b)', border: '1px solid var(--mm-node-stroke, #334155)', borderRadius: 8, padding: '4px 0', minWidth: 150, maxHeight: exportMenuMaxH ?? undefined, overflowY: 'auto', boxShadow: '0 4px 16px rgba(0,0,0,0.4)' }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                  >
+                    {(exportFormats ?? []).map((format) => (
+                      <button
+                        key={format.id}
+                        className="mm-context-item"
+                        onClick={() => { void onExport?.(format, currentTreeSnapshot(), buildExportFileBaseName(title)); setShowExportMenu(false); }}
+                      >
+                        {format.label}
+                      </button>
+                    ))}
+                    <button className="mm-context-item" onClick={() => { exportPng(); setShowExportMenu(false); }}>
+                      PNG image
+                    </button>
+                    <button className="mm-context-item" onClick={() => { exportPdf(); setShowExportMenu(false); }}>
+                      PDF document
+                    </button>
+                  </div>
+                )}
+              </div>
+            ), 'export');
+
+            if (densityPreset === 'large') {
+              return (
+                <>
+                  {activeRibbonTab === 'insert' && toolbarGroup('Content', <>{notesBtn}{datesBtn}{tagsBtn}</>, 'insert')}
+                  {activeRibbonTab === 'insert' && toolbarGroup('Links', <>{linkBtn}{urlBtn}</>, 'insert')}
+                  {activeRibbonTab === 'insert' && toolbarGroup('Files', <>{imageBtn}{attachBtn}</>, 'insert')}
+                  {zoomGroup}
+                  {activeRibbonTab === 'view' && toolbarGroup('Arrange', <>{alignBtn}{focusBtn}</>, 'view')}
+                  {activeRibbonTab === 'view' && toolbarGroup('Find', <>{searchBtn}{shortcutsBtn}</>, 'view')}
+                  {outputGroup}
+                  {/* Theme and Settings live in the nav row's right-hand
+                      cluster for Large (see the toolbar-nav JSX above),
+                      not in the ribbon content. */}
+                </>
+              );
+            }
+            if (densityPreset === 'standard') {
+              // Fewer, broader groups than Large's tab-scoped ones —
+              // Content+Files, Arrange+Find and Theme+Settings all merge
+              // into one group apiece. "Settings" (not "Account") to match
+              // Large's own name for the same group.
+              return (
+                <>
+                  {toolbarGroup('Insert', <>{notesBtn}{datesBtn}{tagsBtn}{linkBtn}{urlBtn}{imageBtn}{attachBtn}</>)}
+                  {zoomGroup}
+                  {toolbarGroup('Navigate', <>{alignBtn}{focusBtn}{searchBtn}{shortcutsBtn}</>)}
+                  {outputGroup}
+                  {toolbarGroup('Settings', <>{themeBtn}<ThemePanel toolbarButton /></>)}
+                </>
+              );
+            }
+            // Lean: same fine-grained groups as Large (not merged) — CSS
+            // hides whichever ones have nothing essential in them, leaving
+            // just the essentials + the "More" overflow. Settings/ThemePanel
+            // stays out of any group here, same as before this refactor —
+            // grouping it with Theme would carry it past the empty-group
+            // check (ThemePanel's own button is itself essential) and it
+            // would show up twice, once here and once in its usual trailing
+            // spot below.
+            return (
+              <>
+                {toolbarGroup('Content', <>{notesBtn}{datesBtn}{tagsBtn}</>)}
+                {toolbarGroup('Links', <>{linkBtn}{urlBtn}</>)}
+                {toolbarGroup('Files', <>{imageBtn}{attachBtn}</>)}
+                {zoomGroup}
+                {toolbarGroup('Arrange', <>{alignBtn}{focusBtn}</>)}
+                {toolbarGroup('Find', <>{searchBtn}{shortcutsBtn}</>)}
+                {outputGroup}
+                {toolbarGroup('Appearance', themeBtn)}
+              </>
+            );
+          })()}
+          {toolbarMode === 'essentials' && (
+            <div style={{ position: 'relative' }}>
+              <button className="mm-btn mm-essential" data-label="More" onClick={() => setShowToolbarOverflow((v) => !v)} title="More actions">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/><circle cx="5" cy="12" r="1.5"/></svg>
+              </button>
+              {showToolbarOverflow && (
+                <div className="mm-overflow-menu" onMouseDown={(e) => e.stopPropagation()}>
+                  {([
+                    ['node.checkbox', 'Checkbox', () => { hasBulk ? bulkToggleCheckbox() : toggleCheckbox(selectedId); }],
+                    ['node.progress', 'Progress', () => { hasBulk ? bulkCycleProgress() : cycleProgress(selectedId); }],
+                    ['node.colour', 'Colour', () => setShowColorPicker((v) => !v)],
+                    ['node.icons', 'Icons', () => setShowIconPicker((v) => !v)],
+                    ['node.dates', 'Dates', () => setShowDateDialog(true)],
+                    ['node.labels', 'Tags', () => setShowTagDialog((v) => !v)],
+                    ['view.zoomIn', 'Zoom in', () => setZoom((z) => Math.min(3, z + 0.15))],
+                    ['view.zoomOut', 'Zoom out', () => setZoom((z) => Math.max(0.3, z - 0.15))],
+                    ['view.zoomFit', 'Fit view', fitView],
+                    ['node.autoAlign', 'Auto-align', () => autoAlignSubtree(selectedId)],
+                    ['view.focusMode', 'Focus mode', () => { setFocusMode((v) => { if (!v) setFocusAnchorId(selectedId); return !v; }); }],
+                    ['find.shortcuts', 'Shortcuts', () => setShowShortcuts((v) => !v)],
+                    ['node.url', 'URL', () => setShowUrlDialog((v) => !v)],
+                    ['node.addImage', 'Image', () => { nodeImageTargetRef.current = selectedId; nodeImageInputRef.current?.click(); }],
+                    ['node.attachFile', 'Attach file', () => nodeAttachmentInputRef.current?.click()],
+                  ] as ReadonlyArray<readonly [string, string, () => void]>)
+                    .concat(onOpenFileLink ? [['node.linkFile', 'Link to file', () => openFileLinkPicker(selectedId)]] : [])
+                    .map(([id, label, onClick]) => (
+                    <button key={label} className="mm-context-item" onClick={() => { onClick(); setShowToolbarOverflow(false); }}>
+                      {label}{id && <kbd>{formatShortcut(id, keyboardLayout)}</kbd>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {densityPreset === 'lean' && <ThemePanel toolbarButton />}
+        </div>
+      </div>}
+
+      {/* ── Search bar ──────────────────────────────────────────────────── */}
+      {searchOpen && (
+        <div className="mm-search-bar">
+          <svg className="mm-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input ref={searchRef} className="mm-search-input" placeholder="Search nodes…" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) searchNext(); if (e.key === 'Enter' && e.shiftKey) searchPrev(); if (e.key === 'Escape') { setSearchOpen(false); setSearchQuery(''); setSearchResults([]); } e.stopPropagation(); }} />
+          {searchResults.length > 0 && <span className="mm-search-count">{searchIdx + 1}/{searchResults.length}</span>}
+          <button className="mm-btn-icon" onClick={() => { setSearchOpen(false); setSearchQuery(''); setSearchResults([]); }}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        </div>
+      )}
+
+      {/* ── Canvas + trays (docked per Settings -> Interface) ──────────── */}
+      <div className={`mm-canvas-area${hasAnyTray ? ' mm-canvas-area--trays' : ''}`}>
+        {traysByPosition.top.length > 0 && (
+          <div className="mm-tray-row">
+            {traysByPosition.top.includes('colour') && (
+              <ColorTray orientation="horizontal" currentColor={selNode?.color ?? null} onSelect={(c) => { hasBulk ? bulkSetColor(c) : setNodeColor(selectedId, c); }} />
+            )}
+            {traysByPosition.top.includes('icon') && (
+              <IconTray orientation="horizontal" currentIcons={selNode?.icons ?? []} onSelect={(n) => { hasBulk ? bulkSetIcon(n) : setNodeIcon(selectedId, n); }} />
+            )}
+          </div>
+        )}
+        <div className="mm-canvas-middle">
+          {traysByPosition.left.length > 0 && (
+            <div className="mm-tray-col">
+              {traysByPosition.left.includes('colour') && (
+                <ColorTray orientation="vertical" currentColor={selNode?.color ?? null} onSelect={(c) => { hasBulk ? bulkSetColor(c) : setNodeColor(selectedId, c); }} />
+              )}
+              {traysByPosition.left.includes('icon') && (
+                <IconTray orientation="vertical" currentIcons={selNode?.icons ?? []} onSelect={(n) => { hasBulk ? bulkSetIcon(n) : setNodeIcon(selectedId, n); }} />
+              )}
+            </div>
+          )}
+      <div className="mm-canvas-wrap">
+        <svg ref={svgRef} className="mm-canvas" onMouseDown={onMouseDownSvg} onMouseMove={onMouseMoveSvg} onMouseUp={onMouseUpSvg} onMouseLeave={onMouseUpSvg}
+          onTouchStart={onTouchStartSvg} onTouchMove={onTouchMoveSvg} onTouchEnd={onTouchEndSvg} onTouchCancel={onTouchEndSvg}
+          onDragOver={onDragOverSvg} onDragLeave={onDragLeaveSvg} onDrop={(e) => { void onDropSvg(e); }}
+          onClick={() => { setShowColorPicker(false); setContextMenu(null); setShowIconPicker(false); setShowExportMenu(false); setShowToolbarOverflow(false); if (!shortcutsPinned) setShowShortcuts(false); }}
+        >
+          <g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`}>
+            <g className="mm-connections">{renderConnections(root)}</g>
+            <g className="mm-nodes">{renderNodes(root)}</g>
+            {rectSel && (() => {
+              const { x, y, w, h } = marqueeBounds(rectSel);
+              return <rect x={x} y={y} width={w} height={h} fill="var(--accent)" fillOpacity={0.08} stroke="var(--accent)" strokeWidth={1 / zoom} strokeDasharray={`${4 / zoom}`} />;
+            })()}
+          </g>
+        </svg>
+        {fileDropBusyNodeId && <div className="mm-file-drop-badge">Attaching dropped files…</div>}
+        {nodeImageBusy && <div className="mm-file-drop-badge" data-testid="node-image-busy">Adding the picture…</div>}
+        {hoveredNoteData && (
+          <div
+            ref={hoverPopupRef}
+            className="mm-note-hover"
+            style={{ left: hoveredNoteData.x, top: hoveredNoteData.y }}
+            tabIndex={0}
+            onMouseEnter={() => {
+              cancelHoverPopupClose();
+              setHoveringNotePopup(true);
+            }}
+            onMouseLeave={() => {
+              setHoveringNotePopup(false);
+              setHoveredNoteNodeId(null);
+            }}
+            onWheel={(e) => {
+              e.stopPropagation();
+            }}
+            onMouseDown={(e) => {
+              e.stopPropagation();
+            }}
+          >
+            <div className="mm-note-hover-title">{hoveredNoteData.title}</div>
+            <div
+              className="mm-note-hover-text"
+              dangerouslySetInnerHTML={{ __html: hoveredNoteData.html }}
+              onClick={(e) => {
+                handleDelegatedLinkClick(e as unknown as MouseEvent);
+              }}
+            />
+          </div>
+        )}
+        {shortcutToast && (<div className="mm-shortcut-toast"><span className="mm-shortcut-toast-key">{shortcutToast.split('—')[0].trim()}</span>{shortcutToast.includes('—') && <span className="mm-shortcut-toast-desc">{shortcutToast.split('—')[1]?.trim()}</span>}</div>)}
+      </div>
+          {traysByPosition.right.length > 0 && (
+            <div className="mm-tray-col">
+              {traysByPosition.right.includes('colour') && (
+                <ColorTray orientation="vertical" currentColor={selNode?.color ?? null} onSelect={(c) => { hasBulk ? bulkSetColor(c) : setNodeColor(selectedId, c); }} />
+              )}
+              {traysByPosition.right.includes('icon') && (
+                <IconTray orientation="vertical" currentIcons={selNode?.icons ?? []} onSelect={(n) => { hasBulk ? bulkSetIcon(n) : setNodeIcon(selectedId, n); }} />
+              )}
+            </div>
+          )}
+        </div>
+        {traysByPosition.bottom.length > 0 && (
+          <div className="mm-tray-row">
+            {traysByPosition.bottom.includes('colour') && (
+              <ColorTray orientation="horizontal" currentColor={selNode?.color ?? null} onSelect={(c) => { hasBulk ? bulkSetColor(c) : setNodeColor(selectedId, c); }} />
+            )}
+            {traysByPosition.bottom.includes('icon') && (
+              <IconTray orientation="horizontal" currentIcons={selNode?.icons ?? []} onSelect={(n) => { hasBulk ? bulkSetIcon(n) : setNodeIcon(selectedId, n); }} />
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── Status bar ──────────────────────────────────────────────── */}
+      {!isMobile && statusBarVisible && (
+        <div className="mm-statusbar">
+          <span>{flattenTree(root).length} node{flattenTree(root).length !== 1 ? 's' : ''}{multiSelect.size > 0 ? ` · ${multiSelect.size} selected` : ''}</span>
+          <span>{selNode ? `Selected: ${selNode.text.split('\n')[0]}` : ''}</span>
+          <span className="mm-statusbar-hint">{[
+            ['node.addChild', 'child'], ['node.addSibling', 'sibling'], ['node.rename', 'rename'],
+            ['node.attachFile', 'attach file'], ['node.addImage', 'image'], ['node.fold', 'fold'],
+            ['node.checkbox', 'check'], ['node.progress', 'progress'], ['node.icons', 'icon'],
+            ['node.dates', 'date'], ['find.search', 'search'],
+          ].map(([id, short]) => `${formatShortcut(id, keyboardLayout)}=${short}`).join(' · ')}</span>
+        </div>
+      )}
+
+      {/* ── Mobile bottom bar ───────────────────────────────────────── */}
+      {isMobile && (
+        <div className="mm-mobile-bottombar">
+          {onBack && (
+            <button className="mm-mobile-btn" onClick={onBack} title="Back to files">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7"/></svg>
+              <span>Back</span>
+            </button>
+          )}
+          <button className="mm-mobile-btn" onClick={() => addChild(selectedId)} title="Add child node">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4"/></svg>
+            <span>Add</span>
+          </button>
+          {mobileDeleteConfirm ? (
+            <>
+              <button className="mm-mobile-btn mm-mobile-btn--danger" onClick={() => { hasBulk ? bulkDelete() : deleteNode(selectedId); setMobileDeleteConfirm(false); }} title="Confirm delete">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7"/></svg>
+                <span>Confirm</span>
+              </button>
+              <button className="mm-mobile-btn" onClick={() => setMobileDeleteConfirm(false)} title="Cancel">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                <span>Cancel</span>
+              </button>
+            </>
+          ) : (
+            <button className="mm-mobile-btn mm-mobile-btn--danger" onClick={() => setMobileDeleteConfirm(true)} disabled={selectedId === 'root' && !hasBulk} title="Delete node">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+              <span>Delete</span>
+            </button>
+          )}
+          <button className="mm-mobile-btn" onClick={fitView} title="Fit all nodes in view">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5"/></svg>
+            <span>Fit</span>
+          </button>
+          <button className={`mm-mobile-btn${mobilePropsOpen ? ' mm-mobile-btn--active' : ''}`} onClick={() => setMobilePropsOpen((v) => !v)} title="Node properties">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="11" y2="18"/><circle cx="17" cy="18" r="3"/><line x1="19.12" y1="20.12" x2="21" y2="22"/></svg>
+            <span>Props</span>
+          </button>
+        </div>
+      )}
+
+      {/* ── Mobile props sheet ──────────────────────────────────────── */}
+      {isMobile && mobilePropsOpen && (
+        <div className="mm-mobile-props" role="dialog" aria-label="Node properties">
+          <div className="mm-mobile-props-header">
+            <span className="mm-mobile-props-title">{selNode ? selNode.text.split('\n')[0].slice(0, 32) || 'Node' : 'Node'}</span>
+            <button className="mm-btn-icon" onClick={() => setMobilePropsOpen(false)} title="Close">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
+          <button
+            className="mm-mobile-edit-text-btn"
+            onClick={() => {
+              setMobileEditTextValue(selNode?.text ?? '');
+              setMobileEditTextOpen(true);
+              setMobilePropsOpen(false);
+            }}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v12a2 2 0 002 2h11a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+            Edit text
+          </button>
+          <div className="mm-mobile-props-section">
+            <span className="mm-mobile-props-label">COLOR</span>
+            <div className="mm-mobile-props-colors">
+              <button
+                className={`mm-mobile-color-swatch${(selNode?.color ?? null) === null ? ' mm-mobile-color-swatch--active' : ''}`}
+                onClick={() => { setNodeColor(selectedId, null); }}
+                title="Default color"
+              />
+              {NODE_COLORS.map((c) => (
+                <button
+                  key={c ?? 'default'}
+                  className={`mm-mobile-color-swatch${(selNode?.color ?? null) === c ? ' mm-mobile-color-swatch--active' : ''}`}
+                  style={{ background: c ?? undefined }}
+                  onClick={() => { setNodeColor(selectedId, c); }}
+                  title={c ?? 'Default'}
+                />
+              ))}
+            </div>
+          </div>
+          <div className="mm-mobile-props-actions">
+            <button className="mm-mobile-props-btn" onClick={() => { openNotes(selectedId); setNotesOpen(true); setMobilePropsOpen(false); }}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+              Notes
+            </button>
+            <button className="mm-mobile-props-btn" onClick={() => { setShowTagDialog((v) => !v); setMobilePropsOpen(false); }}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M7 7h.01M7 3h5l8.5 8.5a2 2 0 010 2.83l-5.17 5.17a2 2 0 01-2.83 0L3 10V5a2 2 0 012-2z"/></svg>
+              Labels
+            </button>
+          </div>
+          <div className="mm-mobile-progress-presets">
+            <button
+              className={`mm-mobile-progress-btn${(selNode?.progress ?? null) === null ? ' mm-mobile-progress-btn--active' : ''}`}
+              onClick={() => setNodeProgress(selectedId, null)}
+            >✕</button>
+            {PROGRESS_PRESETS.map((pct) => (
+              <button
+                key={pct}
+                className={`mm-mobile-progress-btn${selNode?.progress === pct ? ' mm-mobile-progress-btn--active' : ''}`}
+                onClick={() => setNodeProgress(selectedId, pct)}
+              >{pct}%</button>
+            ))}
+          </div>
+          <div className="mm-mobile-props-actions">
+            <button className="mm-mobile-props-btn" onClick={() => { setShowDateDialog(true); setMobilePropsOpen(false); }}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              Date
+            </button>
+            <button
+              className={`mm-mobile-props-btn${selNode?.checked != null ? ' mm-mobile-props-btn--active' : ''}`}
+              onClick={() => { selNode?.checked != null ? toggleCheckbox(selectedId) : addCheckbox(selectedId); }}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+              {selNode?.checked === true ? 'Checked' : selNode?.checked === false ? 'Unchecked' : 'Checkbox'}
+            </button>
+            <button className="mm-mobile-props-btn" onClick={() => { setShowIconPicker(true); setMobilePropsOpen(false); }}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+              Icons
+            </button>
+          </div>
+          <div className="mm-mobile-props-actions">
+            <button
+              className="mm-mobile-props-btn"
+              disabled={!onNodeFileDrop || selectedId === 'root'}
+              onClick={() => { setMobilePropsOpen(false); setMobileRecordingOpen(true); }}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path strokeLinecap="round" strokeLinejoin="round" d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+              <span>Voice note</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Voice recording sheet ────────────────────────────────── */}
+      {mobileRecordingOpen && (
+        <>
+          <div className="mm-overlay mm-overlay--upload-sheet" onClick={() => { discardRecording(); setMobileRecordingOpen(false); }} />
+          <div className="mm-mobile-recording-sheet" role="dialog" aria-modal="true" aria-label="Record audio">
+            <div className="mm-mobile-recording-title">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path strokeLinecap="round" strokeLinejoin="round" d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+              <span>Voice Recording</span>
+              <button className="mm-btn-icon" onClick={() => { discardRecording(); setMobileRecordingOpen(false); }} style={{ marginLeft: 'auto' }} title="Close">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+
+            {recordingState === 'idle' && (
+              <div className="mm-recording-body">
+                <button className="mm-recording-btn mm-recording-btn--start" onClick={() => void startRecording()} title="Start recording">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6}><path strokeLinecap="round" strokeLinejoin="round" d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path strokeLinecap="round" strokeLinejoin="round" d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                </button>
+                <span className="mm-recording-label">Tap to start recording</span>
+                <span className="mm-recording-hint">Audio is stored in the document</span>
+              </div>
+            )}
+
+            {recordingState === 'recording' && (
+              <div className="mm-recording-body">
+                <div className="mm-recording-timer">
+                  {String(Math.floor(recordingSeconds / 60)).padStart(2, '0')}:{String(recordingSeconds % 60).padStart(2, '0')}
+                </div>
+                <button className="mm-recording-btn mm-recording-btn--stop" onClick={stopRecording} title="Stop recording">
+                  <span className="mm-recording-stop-square" />
+                </button>
+                <span className="mm-recording-label">Recording… tap to stop</span>
+              </div>
+            )}
+
+            {recordingState === 'recorded' && recordingBlobUrl && (
+              <div className="mm-recording-body">
+                <audio className="mm-recording-preview" controls src={recordingBlobUrl} />
+                <div className="mm-recording-name-row">
+                  <input
+                    className="mm-recording-name-input"
+                    type="text"
+                    placeholder="Name this recording…"
+                    value={recordingName}
+                    onChange={(e) => setRecordingName(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') void saveRecording(); }}
+                  />
+                </div>
+                <div className="mm-recording-actions">
+                  <button className="mm-btn mm-btn--primary" onClick={() => void saveRecording()}>Save &amp; Upload</button>
+                  <button className="mm-btn" onClick={() => { discardRecording(); setMobileRecordingOpen(false); }}>Discard</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* ── Mobile text edit sheet ──────────────────────────────────── */}
+      {isMobile && mobileEditTextOpen && (
+        <div className="mm-mobile-text-edit" role="dialog" aria-label="Edit node text">
+          <div className="mm-mobile-props-header">
+            <span className="mm-mobile-props-title">Edit text</span>
+            <button className="mm-btn-icon" onClick={() => setMobileEditTextOpen(false)} title="Cancel">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
+          <textarea
+            className="mm-mobile-text-edit-area"
+            value={mobileEditTextValue}
+            onChange={(e) => setMobileEditTextValue(e.target.value)}
+            placeholder="Node text…"
+            autoFocus
+            rows={4}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') { setMobileEditTextOpen(false); e.stopPropagation(); }
+            }}
+          />
+          <div className="mm-mobile-text-edit-actions">
+            <button className="mm-mobile-props-btn" onClick={() => setMobileEditTextOpen(false)}>
+              Cancel
+            </button>
+            <button
+              className="mm-mobile-props-btn mm-mobile-props-btn--accent"
+              onClick={() => {
+                const trimmed = mobileEditTextValue.trim();
+                if (trimmed && selNode) {
+                  const newRoot = cloneTree(root);
+                  const found = findNode(newRoot, selectedId);
+                  if (found) { found.node.text = trimmed; mutate(newRoot); }
+                }
+                setMobileEditTextOpen(false);
+              }}
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Context menu ────────────────────────────────────────────── */}
+      {contextMenu && (() => {
+        const cmFind = findNode(root, contextMenu.nodeId);
+        if (!cmFind) return null;
+        const cmNode = cmFind.node;
+        const cmIsRoot = contextMenu.nodeId === 'root';
+        const cmHasChildren = cmNode.children.length > 0;
+        const cmCanMoveUp = cmFind.parent != null && cmFind.index > 0;
+        const cmCanMoveDown = cmFind.parent != null && cmFind.index < (cmFind.parent.children.length - 1);
+        const cmHasCheckbox = cmNode.checked != null;
+        return (<>
+          <div className="mm-context-overlay" onClick={() => setContextMenu(null)} />
+          <div
+            ref={contextMenuRef}
+            className="mm-context-menu"
+            style={{ left: contextMenuPos?.left ?? contextMenu.x, top: contextMenuPos?.top ?? contextMenu.y }}
+          >
+            <div className="mm-context-header">{cmNode.text.substring(0, 30) || 'Node'}</div>
+            <button className="mm-context-item" onClick={() => { const f = findNode(root, contextMenu.nodeId); if (f) startEditing(f.node); setContextMenu(null); }}>Rename <kbd>{formatShortcut('node.rename', keyboardLayout)}</kbd></button>
+            <button className="mm-context-item" onClick={() => { addChild(contextMenu.nodeId); setContextMenu(null); }}>Add Child <kbd>{formatShortcut('node.addChild', keyboardLayout)}</kbd></button>
+            {cmIsRoot && <button className="mm-context-item" onClick={() => { addChild('root', 'left'); setContextMenu(null); }}>Add Left Child <kbd>{formatShortcut('node.addLeftChild', keyboardLayout)}</kbd></button>}
+            {!cmIsRoot && <button className="mm-context-item" onClick={() => { addSibling(contextMenu.nodeId); setContextMenu(null); }}>Add Sibling <kbd>{formatShortcut('node.addSibling', keyboardLayout)}</kbd></button>}
+            <div className="mm-context-divider" />
+            {cmHasChildren && <button className="mm-context-item" onClick={() => { toggleCollapse(contextMenu.nodeId); setContextMenu(null); }}>{cmNode.collapsed ? 'Expand' : 'Collapse'} <kbd>{formatShortcut('node.fold', keyboardLayout)}</kbd></button>}
+            <button className="mm-context-item" data-testid="context-notes" onClick={() => { openNotes(contextMenu.nodeId); setNotesOpen(true); setContextMenu(null); }}>Note <kbd>{formatShortcut('node.notesToggle', keyboardLayout)}</kbd></button>
+            {onOpenFileLink && (
+              <button className="mm-context-item" data-testid="context-link-vault" onClick={() => { openFileLinkPicker(contextMenu.nodeId); setContextMenu(null); }}>
+                {cmNode.link?.path ? 'Change File Link…' : 'Link to File…'} <kbd>{formatShortcut('node.linkFile', keyboardLayout)}</kbd>
+              </button>
+            )}
+            {cmNode.link?.path && (
+              <button className="mm-context-item" onClick={() => { setNodeLink(contextMenu.nodeId, null); setContextMenu(null); }}>Remove File Link</button>
+            )}
+            <button className="mm-context-item" data-testid="context-add-url" onClick={() => { setShowUrlDialog(true); setContextMenu(null); }}>Add URL… <kbd>{formatShortcut('node.url', keyboardLayout)}</kbd></button>
+            <button className="mm-context-item" data-testid="context-add-image" onClick={() => {
+              nodeImageTargetRef.current = contextMenu.nodeId;
+              nodeImageInputRef.current?.click();
+              setContextMenu(null);
+            }}>{cmNode.image?.thumb ? 'Replace Image…' : 'Add Image…'} <kbd>{formatShortcut('node.addImage', keyboardLayout)}</kbd></button>
+            {cmNode.image?.thumb && (
+              <button className="mm-context-item" data-testid="context-remove-image" onClick={() => { removeNodeImage(contextMenu.nodeId); setContextMenu(null); }}>Remove Image</button>
+            )}
+            <div className="mm-context-divider" />
+            <button className="mm-context-item" onClick={() => { setShowIconPicker(true); setContextMenu(null); }}>Icon <kbd>{formatShortcut('node.icons', keyboardLayout)}</kbd></button>
+            <button className="mm-context-item" onClick={() => {
+              cmHasCheckbox ? toggleCheckbox(contextMenu.nodeId) : addCheckbox(contextMenu.nodeId);
+              setContextMenu(null);
+            }}>{cmHasCheckbox ? (cmNode.checked ? 'Uncheck' : 'Check') : 'Add Checkbox'} <kbd>{formatShortcut('node.checkbox', keyboardLayout)}</kbd></button>
+            {cmHasCheckbox && <button className="mm-context-item" onClick={() => { removeCheckbox(contextMenu.nodeId); setContextMenu(null); }}>Remove Checkbox</button>}
+            <div className="mm-context-item mm-context-progress-row">Progress
+              <div className="mm-context-progress-presets">
+                <span className={`mm-ctx-progress${cmNode.progress == null ? ' active' : ''}`} onClick={() => {
+                  setNodeProgress(contextMenu.nodeId, null);
+                  setContextMenu(null);
+                }}>✕</span>
+                {PROGRESS_PRESETS.map((pct) => (<span key={pct} className={`mm-ctx-progress${cmNode.progress === pct ? ' active' : ''}`} onClick={() => {
+                  setNodeProgress(contextMenu.nodeId, pct);
+                  setContextMenu(null);
+                }}>{pct}</span>))}
+              </div><kbd>{formatShortcut('node.progress', keyboardLayout)}</kbd>
+            </div>
+            <button className="mm-context-item" onClick={() => { setShowDateDialog(true); setContextMenu(null); }}>Date Planning <kbd>{formatShortcut('node.dates', keyboardLayout)}</kbd></button>
+            <button className="mm-context-item" onClick={() => { setShowTagDialog(true); setContextMenu(null); }}>Labels <kbd>{formatShortcut('node.labels', keyboardLayout)}</kbd></button>
+            <div className="mm-context-divider" />
+            {!cmIsRoot && cmCanMoveUp && <button className="mm-context-item" onClick={() => { moveNode(contextMenu.nodeId, 'up'); setContextMenu(null); }}>Move Up</button>}
+            {!cmIsRoot && cmCanMoveDown && <button className="mm-context-item" onClick={() => { moveNode(contextMenu.nodeId, 'down'); setContextMenu(null); }}>Move Down</button>}
+            {!cmIsRoot && <button className="mm-context-item" onClick={() => { duplicateNode(contextMenu.nodeId); setContextMenu(null); }}>Duplicate</button>}
+            <button className="mm-context-item" onClick={() => { resetNodePosition(contextMenu.nodeId); setContextMenu(null); }}>Reset Position <kbd>{formatShortcut('node.resetPosition', keyboardLayout)}</kbd></button>
+            <button className="mm-context-item" onClick={() => { autoAlignSubtree(contextMenu.nodeId); setContextMenu(null); }}>Auto-align subtree <kbd>{formatShortcut('node.autoAlign', keyboardLayout)}</kbd></button>
+            {!cmIsRoot && (<><div className="mm-context-divider" /><button className="mm-context-item mm-context-danger" onClick={() => { deleteNode(contextMenu.nodeId); setContextMenu(null); }}>Delete <kbd>{formatShortcut('node.delete', keyboardLayout)}</kbd></button></>)}
+          </div>
+        </>);
+      })()}
+
+      {/* ── Notes panel ─────────────────────────────────────────────── */}
+      {/* ── Tag dialog ─────────────────────────────────────────────── */}
+      {showTagDialog && (() => {
+        const nodeForTags = findNode(root, selectedId)?.node;
+        const currentTags = nodeForTags?.tags ?? [];
+        const applyTag = (t: string) => {
+          if (!currentTags.includes(t)) setNodeTags(selectedId, [...currentTags, t]);
+        };
+        const libraryOnlyLabels = userLabels.filter((l) => !currentTags.includes(l.name));
+        return (
+          <div className="mm-tag-dialog" style={{ position: 'absolute', right: 12, top: 60, zIndex: 200 }}>
+            <div className="mm-tag-dialog-title">Labels — {getVisibleNodeTextLines(nodeForTags?.text ?? '')[0] || 'Node'}</div>
+            <div className="mm-tag-chips">
+              {currentTags.map((tag) => {
+                const lib = userLabels.find((l) => l.name === tag);
+                return (
+                  <span key={tag} className="mm-tag-chip" style={lib ? { background: lib.color } : {}}>
+                    {tag}
+                    <button onClick={() => setNodeTags(selectedId, currentTags.filter((t) => t !== tag))}>×</button>
+                  </span>
+                );
+              })}
+              {currentTags.length === 0 && <span style={{ fontSize: 11, opacity: 0.5 }}>No labels yet</span>}
+            </div>
+            <div className="mm-tag-input-row">
+              <input className="mm-tag-input" placeholder="Add label…" value={tagInputValue}
+                onChange={(e) => setTagInputValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && tagInputValue.trim()) {
+                    const t = tagInputValue.trim().toLowerCase();
+                    if (!userLabels.some((l) => l.name === t)) addUserLabel(t, tagInputColor);
+                    applyTag(t);
+                    setTagInputValue('');
+                    e.stopPropagation();
+                  }
+                  if (e.key === 'Escape') { setShowTagDialog(false); e.stopPropagation(); }
+                }}
+                autoFocus
+              />
+              <label title="Label color" style={{ display: 'inline-flex', alignItems: 'center', cursor: 'pointer' }}>
+                <span style={{ width: 16, height: 16, borderRadius: 999, background: tagInputColor, border: '1px solid rgba(255,255,255,0.35)' }} />
+                <input
+                  type="color"
+                  value={tagInputColor}
+                  onChange={(e) => setTagInputColor(e.target.value)}
+                  style={{ opacity: 0, position: 'absolute', width: 1, height: 1, pointerEvents: 'none' }}
+                />
+              </label>
+              <button className="mm-tag-add-btn" disabled={!tagInputValue.trim()}
+                onClick={() => {
+                  const t = tagInputValue.trim().toLowerCase();
+                  if (t) {
+                    if (!userLabels.some((l) => l.name === t)) addUserLabel(t, tagInputColor);
+                    applyTag(t);
+                    setTagInputValue('');
+                  }
+                }}>Add</button>
+              <button className="mm-tag-add-btn" title="Save to library"
+                disabled={!tagInputValue.trim()}
+                onClick={() => {
+                  const t = tagInputValue.trim().toLowerCase();
+                  if (t) { addUserLabel(t, tagInputColor); applyTag(t); setTagInputValue(''); }
+                }}>📌</button>
+            </div>
+            {(userLabels.length > 0) && (
+              <div style={{ marginTop: 8 }}>
+                <div style={{ fontSize: 10, opacity: 0.55, marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Your library</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {userLabels.map((lbl) => (
+                    <span key={lbl.name} style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+                      <button
+                        onClick={() => applyTag(lbl.name)}
+                        style={{ background: lbl.color, color: '#fff', borderRadius: 8, padding: '1px 8px', fontSize: 10, fontWeight: 600, border: 'none', cursor: 'pointer', opacity: libraryOnlyLabels.includes(lbl) ? 1 : 0.45 }}
+                        title={currentTags.includes(lbl.name) ? 'Already applied' : 'Apply to node'}
+                      >{lbl.name}</button>
+                      {/* Color swatch — clicking opens native color picker */}
+                      <label title="Change color" style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}>
+                        <span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%', background: lbl.color, border: '1px solid rgba(255,255,255,0.3)', flexShrink: 0 }} />
+                        <input
+                          type="color"
+                          value={lbl.color}
+                          style={{ opacity: 0, position: 'absolute', width: 1, height: 1, pointerEvents: 'none' }}
+                          onChange={(e) => updateLabelColor(lbl.name, e.target.value)}
+                        />
+                      </label>
+                      <button onClick={() => removeUserLabel(lbl.name)} style={{ fontSize: 9, opacity: 0.5, background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0 }} title="Remove from library">×</button>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      <MindMapNotesDialog
+        open={notesOpen}
+        notesDropActive={notesDropActive}
+        nodeTitle={getVisibleNodeTextLines(selNode?.text ?? '')[0] || 'Untitled node'}
+        hasNodeNotes={Boolean(selNode?.notes?.trim())}
+        nodeTags={(selNode?.tags ?? []).map((tag) => ({ name: tag, color: userLabels.find((label) => label.name === tag)?.color ?? 'var(--accent)' }))}
+        attachmentCount={selNodeAttachmentCount}
+        attachmentLabel={selNodeAttachmentLabel}
+        attachments={notesDialogAttachments}
+        attachmentPreviewUrls={attachmentPreviewUrls}
+        canDeleteAttachment={Boolean(onDeleteNodeAttachment)}
+        notesUploadBusy={notesUploadBusy}
+        nodeId={notesNodeId}
+        initialNotesText={notesSeed}
+        notesPreviewHtml={notesPreviewHtml}
+        onToggleTask={toggleNotesTask}
+        saveState={notesSaveState}
+        editorRef={notesRef}
+        notesAttachmentInputRef={notesAttachmentInputRef}
+        resolveImageUrl={resolveNotesImageUrl}
+        onClose={closeNotes}
+        onDragOver={(e) => {
+          if (!onNodeFileDrop) return;
+          if (e.dataTransfer.types.includes('Files')) {
+            e.preventDefault();
+            setNotesDropActive(true);
+          }
+        }}
+        onDragLeave={(e) => {
+          if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+          setNotesDropActive(false);
+        }}
+        onDrop={(e) => {
+          if (!onNodeFileDrop) return;
+          e.preventDefault();
+          const files = Array.from(e.dataTransfer.files ?? []);
+          if (files.length > 0) {
+            void uploadFilesIntoNotes(files);
+          } else {
+            setNotesDropActive(false);
+          }
+        }}
+        onOpenAttachment={(attachment) => { void previewOrOpenAttachment(attachment); }}
+        onDeleteAttachment={(attachment) => { void deleteNotesAttachment(attachment); }}
+        onAddAttachmentFiles={(files) => { void uploadFilesIntoNotes(files); }}
+        onInsertMarkdownAction={insertMarkdownAction}
+        onNotesTextChange={setNotesText}
+        onNotesPaste={(e) => {
+          const files = Array.from(e.clipboardData.items)
+            .filter((item) => item.kind === 'file')
+            .map((item) => item.getAsFile())
+            .filter((file): file is File => Boolean(file));
+          if (files.length > 0) {
+            e.preventDefault();
+            void uploadFilesIntoNotes(files);
+          }
+        }}
+        onDeleteNotes={deleteNotes}
+      />
+
+      {attachmentPreviewOpen && (
+        <>
+          <div className="mm-overlay mm-overlay--attachment-preview" onClick={closeAttachmentPreview} />
+          <div className="mm-attachment-preview-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="mm-attachment-preview-header">
+              <span>{attachmentPreviewTitle || 'Attachment preview'}</span>
+              <button className="mm-btn-icon" onClick={closeAttachmentPreview} title="Close preview">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round">
+                  <line x1="18" y1="6" x2="6" y2="18"/>
+                  <line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+              </button>
+            </div>
+            <div className="mm-attachment-preview-body">
+              {attachmentPreviewBusy && <div className="mm-attachment-preview-placeholder">Loading preview…</div>}
+              {!attachmentPreviewBusy && attachmentPreviewType === 'image' && attachmentPreviewUrl && (
+                <img className="mm-attachment-preview-image" src={attachmentPreviewUrl} alt={attachmentPreviewTitle || 'Attachment'} />
+              )}
+              {!attachmentPreviewBusy && attachmentPreviewType === 'pdf' && attachmentPreviewUrl && (
+                <iframe className="mm-attachment-preview-pdf" src={attachmentPreviewUrl} title={attachmentPreviewTitle || 'PDF preview'} />
+              )}
+              {!attachmentPreviewBusy && attachmentPreviewType === 'audio' && attachmentPreviewUrl && (
+                <div className="mm-attachment-preview-audio-wrap">
+                  <svg className="mm-attachment-preview-audio-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                    <line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>
+                  </svg>
+                  <audio className="mm-attachment-preview-audio" controls src={attachmentPreviewUrl} />
+                </div>
+              )}
+              {!attachmentPreviewBusy && !attachmentPreviewUrl && (
+                <div className="mm-attachment-preview-placeholder">Preview is unavailable for this file.</div>
+              )}
+            </div>
+            <div className="mm-attachment-preview-footer">
+              <button
+                className="mm-btn mm-btn--primary"
+                onClick={async () => {
+                  if (!attachmentPreviewUrl) return;
+                  const response = await fetch(attachmentPreviewUrl);
+                  const blob = await response.blob();
+                  await downloadBlob(blob, attachmentPreviewTitle || 'attachment');
+                }}
+              >
+                Download
+              </button>
+              <button className="mm-btn" onClick={closeAttachmentPreview}>Close</button>
+              <span className="mm-attachment-preview-meta">{attachmentPreviewContentType}</span>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ── Shortcuts panel ─────────────────────────────────────────── */}
+      {showShortcuts && (
+        <div className="mm-shortcuts-panel" style={shortcutsPos ? { left: shortcutsPos.x, top: shortcutsPos.y, right: 'auto' } : undefined}>
+          <div className="mm-notes-header" style={{ cursor: 'grab', userSelect: 'none' }}
+            onMouseDown={(e) => {
+              const el = (e.currentTarget.parentElement as HTMLDivElement);
+              const rect = el.getBoundingClientRect();
+              // The panel is positioned against its offset parent, not the
+              // viewport, so the pointer's client coords have to be rebased
+              // onto that parent or the panel jumps by the parent's offset
+              // the moment it is grabbed.
+              const parent = (el.offsetParent as HTMLElement | null);
+              const pRect = parent?.getBoundingClientRect();
+              const MARGIN = 8;
+              scDragRef.current = {
+                offsetX: e.clientX - rect.left,
+                offsetY: e.clientY - rect.top,
+                originX: pRect?.left ?? 0,
+                originY: pRect?.top ?? 0,
+                maxX: (pRect?.width ?? window.innerWidth) - rect.width - MARGIN,
+                maxY: (pRect?.height ?? window.innerHeight) - rect.height - MARGIN,
+              };
+              const onMove = (me: MouseEvent) => {
+                const d = scDragRef.current;
+                if (!d) return;
+                setShortcutsPos({
+                  x: Math.max(MARGIN, Math.min(me.clientX - d.offsetX - d.originX, d.maxX)),
+                  y: Math.max(MARGIN, Math.min(me.clientY - d.offsetY - d.originY, d.maxY)),
+                });
+              };
+              const onUp = () => { scDragRef.current = null; window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+              window.addEventListener('mousemove', onMove);
+              window.addEventListener('mouseup', onUp);
+            }}
+          ><span>Keyboard Shortcuts</span>
+            <label
+              className="mm-switch"
+              style={{ marginLeft: 'auto' }}
+              title={shortcutsPinned
+                ? 'Always on: the card stays on the canvas and reopens with the editor'
+                : 'Always on: off — a canvas click closes the card'}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <span className="mm-switch-label">Always on</span>
+              <input
+                type="checkbox"
+                role="switch"
+                checked={shortcutsPinned}
+                onChange={(e) => setShortcutsPinned(e.target.checked)}
+              />
+            </label>
+            <button
+              className="mm-btn-icon"
+              title="Close"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={() => {
+                // Closing by hand is an explicit "not now", so it clears the
+                // always-on flag too — otherwise the card would silently
+                // reappear on the next launch with no way to see why.
+                setShortcutsPinned(false);
+                setShowShortcuts(false);
+              }}
+            ><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+          </div>
+          <div className="mm-shortcuts-grid">
+            {(['Nodes', 'Format', 'View', 'Edit', 'Find', 'File'] as const).map((group) => (
+              <Fragment key={group}>
+                <div className="mm-shortcuts-group-label">{group}</div>
+                {SHORTCUTS.filter((s) => s.group === group).map((s) => (
+                  <div key={s.id} className="mm-shortcut-row">
+                    <kbd className="mm-kbd">{formatShortcut(s.id, keyboardLayout)}</kbd>
+                    <span>{s.label}</span>
+                  </div>
+                ))}
+              </Fragment>
+            ))}
+            <Fragment>
+              <div className="mm-shortcuts-group-label">Selection</div>
+              {[
+                ['↑ ↓ ← →', 'Navigate (spatial)'],
+                ['⇧+Arrow', 'Multi-select'],
+                [isMac ? '⌘+Click' : 'Ctrl+Click', 'Toggle select'],
+                ['⇧+Drag', 'Rectangle select'],
+                ['Esc', 'Cancel / Clear'],
+              ].map(([k, v]) => (<div key={k} className="mm-shortcut-row"><kbd className="mm-kbd">{k}</kbd><span>{v}</span></div>))}
+            </Fragment>
+          </div>
+        </div>
+      )}
+
+      {/* ── Date dialog ─────────────────────────────────────────────── */}
+      <MindMapDateDialog open={showDateDialog} startDate={selNode?.startDate ?? null} endDate={selNode?.endDate ?? null}
+        onSave={(s, e) => setNodeDates(selectedId, s, e)} onClose={() => setShowDateDialog(false)} />
+
+      {/* ── Vault link dialog ───────────────────────────────────────── */}
+      <MindMapFileLinkDialog
+        open={linkTargetNodeId !== null}
+        currentPath={documentPath}
+        files={linkableFiles ?? []}
+        loading={linkableFilesLoading}
+        linkedPath={linkTargetNodeId ? findNode(root, linkTargetNodeId)?.node.link?.path ?? null : null}
+        onPick={(file) => { if (linkTargetNodeId) setNodeLink(linkTargetNodeId, file); setLinkTargetNodeId(null); }}
+        onRemove={() => { if (linkTargetNodeId) setNodeLink(linkTargetNodeId, null); setLinkTargetNodeId(null); }}
+        onClose={() => setLinkTargetNodeId(null)}
+      />
+
+      {/* ── URL dialog ──────────────────────────────────────────────── */}
+      {showUrlDialog && (<>
+        <div className="mm-overlay" onClick={() => setShowUrlDialog(false)} />
+        <div className="mm-date-dialog">
+          <div className="mm-date-header">
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path strokeLinecap="round" strokeLinejoin="round" d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
+            <span>Add URL</span>
+            <button className="mm-btn-icon" onClick={() => setShowUrlDialog(false)} style={{ marginLeft: 'auto' }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+          </div>
+          <div className="mm-date-body">
+            <label className="mm-date-label">URL</label>
+            <input className="mm-date-input" type="url" placeholder="https://…" value={urlDraft.url} onChange={(e) => setUrlDraft((d) => ({ ...d, url: e.target.value }))} onKeyDown={(e) => { if (e.key === 'Escape') { setShowUrlDialog(false); e.stopPropagation(); } if (e.key === 'Enter' && urlDraft.url.trim()) { addNodeUrl(selectedId, { url: urlDraft.url.trim(), label: urlDraft.label.trim() }); setUrlDraft({ url: '', label: '' }); setShowUrlDialog(false); } e.stopPropagation(); }} />
+            <label className="mm-date-label">Label (optional)</label>
+            <input className="mm-date-input" type="text" placeholder="Display text" value={urlDraft.label} onChange={(e) => setUrlDraft((d) => ({ ...d, label: e.target.value }))}
+              onKeyDown={(e) => { if (e.key === 'Escape') { setShowUrlDialog(false); e.stopPropagation(); } if (e.key === 'Enter' && urlDraft.url.trim()) { addNodeUrl(selectedId, { url: urlDraft.url.trim(), label: urlDraft.label.trim() }); setUrlDraft({ url: '', label: '' }); setShowUrlDialog(false); } e.stopPropagation(); }} />
+            {(selNode?.urls ?? []).length > 0 && (<div style={{ marginTop: 8 }}>
+              <label className="mm-date-label">Current URLs</label>
+              {(selNode?.urls ?? []).map((u, i) => (<div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, marginBottom: 4 }}>
+                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--accent)' }}>{u.label || u.url}</span>
+                <button className="mm-btn mm-btn--danger" style={{ padding: '0 6px', height: 22, fontSize: 10 }} onClick={() => removeNodeUrl(selectedId, i)}>✕</button>
+              </div>))}
+            </div>)}
+          </div>
+          <div className="mm-date-footer">
+            <button className="mm-btn mm-btn--primary" disabled={!urlDraft.url.trim()} onClick={() => { addNodeUrl(selectedId, { url: urlDraft.url.trim(), label: urlDraft.label.trim() }); setUrlDraft({ url: '', label: '' }); setShowUrlDialog(false); }}>Add URL</button>
+            <button className="mm-btn" onClick={() => setShowUrlDialog(false)}>Cancel</button>
+          </div>
+        </div>
+      </>)}
+    </div>
+  );
+}
+
+export const MindMapEditor = DesktopMindMapEditor;

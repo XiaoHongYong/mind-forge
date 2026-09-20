@@ -1,0 +1,15 @@
+{
+  "name": "mindforge-oss-workspace",
+  "private": true,
+  "packageManager": "pnpm@10.17.1",
+  "scripts": {
+    "dev:app": "pnpm --dir frontend_app dev",
+    "build:app": "pnpm --dir frontend_app build",
+    "test:app": "pnpm --dir frontend_app test",
+    "check:roundtrip": "node scripts/check_import_export_roundtrip.mjs",
+    "tauri:dev": "pnpm --dir frontend_app tauri:dev",
+    "tauri:build": "pnpm --dir frontend_app tauri:build",
+    "build:linux": "docker build -f scripts/linux-build.Dockerfile --output type=local,dest=./dist-linux .",
+    "build:linux:x64": "docker build --platform linux/amd64 -f scripts/linux-build.Dockerfile --output type=local,dest=./dist-linux ."
+  }
+}

@@ -1,0 +1,13 @@
+import { createContext, createElement, useContext } from 'react';
+import type { JSX } from 'react';
+import { createConnectorContextApi } from '@mindforge/connectors';
+import type { ConnectorRegistry } from '@mindforge/connectors';
+
+const connectorContextApi = createConnectorContextApi({
+  createContext,
+  useContext,
+  createElement,
+});
+
+export const ConnectorProvider = connectorContextApi.ConnectorProvider as ({ registry, children }: { registry: ConnectorRegistry; children: React.ReactNode }) => JSX.Element;
+export const useConnectors = connectorContextApi.useConnectors as () => ConnectorRegistry;

@@ -1,0 +1,74 @@
+name: mindforge
+title: MindForge
+version: '0.6.2'
+summary: Offline local mind maps — no account, no network
+description: |
+  MindForge is a privacy-first mind mapping app that works entirely offline:
+  there is no account, no server, and no telemetry.
+
+  This snap is strictly confined and declares no network interface at all, so
+  the local-only promise is enforced by the system rather than taken on trust.
+  Your maps are ordinary files on this device and never leave it.
+
+  Import and export FreeMind, FreePlane, WiseMapping, XMind, Markdown and the
+  app's own lossless .mmforge format.
+
+grade: stable
+confinement: strict
+base: core24
+license: MIT
+source-code: https://github.com/mindforge/mindforge
+website: https://mindforge.com
+issues: https://github.com/mindforge/mindforge/issues
+contact: https://github.com/mindforge/mindforge/issues
+
+platforms:
+  amd64:
+    build-on: [amd64]
+    build-for: [amd64]
+
+parts:
+  mindforge:
+    plugin: dump
+    # Built by `tauri build --config tauri.conf.linux.json`.
+    source: deb/mindforge.deb
+    source-type: deb
+    # WebKitGTK 4.1, GTK, GLib, Pango, Cairo, libsoup and the GDK-pixbuf
+    # loaders all come from the GNOME platform snap via the `gnome` extension.
+    #
+    # Do NOT stage libwebkit2gtk-4.1-0 here. The extension bind-mounts the
+    # platform's helper executables (WebKitWebProcess, WebKitNetworkProcess)
+    # at /usr/lib/<triplet>/webkit2gtk-4.1, and a staged copy of the library
+    # would be a different WebKit release than those helpers: the UI process
+    # then loads the staged .so, launches the platform's helpers, and the web
+    # process never completes its handshake — a window with a menu bar and a
+    # blank page. (WEBKIT_EXEC_PATH cannot redirect this; release builds of
+    # WebKit ignore it.) Only what the platform does not carry is staged.
+    stage-packages:
+      - libayatana-appindicator3-1
+      - libxdo3
+
+apps:
+  mindforge:
+    command: usr/bin/MindForge
+    desktop: usr/share/applications/MindForge Local-Only.desktop
+    # The gnome extension wires up GTK, GSettings schemas, fonts, icon themes,
+    # GL, the library search path and the WebKit helper layout. Without it,
+    # revision 1 aborted on launch with "Unable to spawn a new child process:
+    # /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess".
+    extensions: [gnome]
+    environment:
+      TMPDIR: $XDG_RUNTIME_DIR
+      # WebKit has no usable GPU under VMs and many stock drivers; without this
+      # the window comes up black.
+      WEBKIT_DISABLE_COMPOSITING_MODE: "1"
+    plugs:
+      # Deliberately NO network / network-bind: this edition never talks to a
+      # server, and the store listing should be able to prove it.
+      - home
+      - desktop
+      - desktop-legacy
+      - opengl
+      - wayland
+      - x11
+      - unity7

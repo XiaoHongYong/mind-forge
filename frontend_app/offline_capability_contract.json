@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 2,
+  "contractName": "mindforge-offline-frontend-contract",
+  "lastUpdated": "2026-09-20",
+  "offlineCoreCapabilities": [
+    "open-edit-save-local-mindmap-files",
+    "new-untitled-document-with-save-as",
+    "recent-files-list",
+    "undo-redo-history",
+    "local-search-and-filter",
+    "import-export-mmforge-markdown-freemind-freeplane-wisemapping-xmind-png-svg-pdf",
+    "keyboard-shortcuts-and-command-palette",
+    "tags-and-local-metadata",
+    "offline-startup-without-network",
+    "inline-node-attachments-in-document"
+  ],
+  "localOnlyGuarantees": [
+    "no-telemetry",
+    "no-hidden-api-calls",
+    "no-required-cloud-account",
+    "plaintext-documents-on-user-chosen-paths"
+  ],
+  "mustNotRequireServer": [
+    "auth-for-core-editing",
+    "remote-blob-upload-for-save",
+    "network-connectivity-for-open-edit-export",
+    "server-availability-for-core-editor-startup"
+  ]
+}
