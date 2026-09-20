@@ -14,6 +14,7 @@
 
 import type { MindMapTreeNode, UrlEntry } from '../../types';
 import { cloneTree, findNode, isDescendant, uid } from '../MindMapHelpers';
+import { estimateSubtreeHeight } from '@mindforge/mindmap-core';
 
 /** A node with every field present, so nothing downstream has to guard. */
 export const createNode = (over: Partial<MindMapTreeNode> = {}): MindMapTreeNode => ({
@@ -264,20 +265,68 @@ export const removeNodes = (root: MindMapTreeNode, nodeIds: Iterable<string>): R
 /** How root children fan out: all to the right, or balanced left/right. */
 export type RootLayoutMode = 'tree' | 'map';
 
-const subtreeWeight = (node: MindMapTreeNode): number =>
-  1 + node.children.reduce((sum, child) => sum + subtreeWeight(child), 0);
+/**
+ * Clockwise reading order around the root: right top→bottom, then left
+ * bottom→top. Left children are stored top→bottom in the tree, so reverse them.
+ */
+export const clockwiseRootSequence = (root: MindMapTreeNode): MindMapTreeNode[] => {
+  const rights = root.children.filter((child) => child.side !== 'left');
+  const lefts = root.children.filter((child) => child.side === 'left');
+  return [...rights, ...lefts.slice().reverse()];
+};
 
-/** Which side of the root currently has less weight — for inserting in map mode. */
-export const pickBalancedSide = (root: MindMapTreeNode): 'left' | 'right' => {
-  let left = 0;
-  let right = 0;
-  for (const child of root.children) {
-    const w = subtreeWeight(child);
-    if (child.side === 'left') left += w;
-    else right += w;
+/**
+ * Assign root children clockwise by expanded subtree height: compute every
+ * child's height first, then pick the split that keeps left and right as even
+ * as possible. Topics after the cut continue on the left from bottom toward top.
+ */
+export const applyClockwiseMapLayout = (root: MindMapTreeNode): MindMapTreeNode => {
+  const next = cloneTree(root);
+  const sequence = clockwiseRootSequence(next);
+  if (sequence.length === 0) return next;
+
+  const heights = sequence.map((child) => estimateSubtreeHeight(child, 1));
+  const totalH = heights.reduce((sum, h) => sum + h, 0);
+
+  // rightCount in 1..n: how many leading topics stay on the right.
+  // Prefer the cut whose |right − left| is smallest; on a tie, keep more on
+  // the right so the clockwise arc still starts there.
+  let bestRightCount = sequence.length;
+  let bestDiff = totalH;
+  let cum = 0;
+  for (let rightCount = 1; rightCount <= sequence.length; rightCount++) {
+    cum += heights[rightCount - 1];
+    const diff = Math.abs(cum - (totalH - cum));
+    if (diff < bestDiff || (diff === bestDiff && rightCount > bestRightCount)) {
+      bestDiff = diff;
+      bestRightCount = rightCount;
+    }
   }
-  // Prefer the right when tied so the first topic matches the default tree feel.
-  return right <= left ? 'right' : 'left';
+
+  const rights = sequence.slice(0, bestRightCount);
+  const leftsClockwise = sequence.slice(bestRightCount);
+  for (const child of rights) child.side = 'right';
+  for (const child of leftsClockwise) child.side = 'left';
+
+  // leftsClockwise is bottom→top; the tree lays left children out top→bottom.
+  const lefts = leftsClockwise.slice().reverse();
+  next.children = [...rights, ...lefts];
+  return next;
+};
+
+/**
+ * Which side a new root child should start on before a full clockwise rebalance.
+ * Kept for callers that only need a hint; map mode prefers `applyClockwiseMapLayout`.
+ */
+export const pickBalancedSide = (root: MindMapTreeNode): 'left' | 'right' => {
+  const rights = root.children.filter((child) => child.side !== 'left');
+  const lefts = root.children.filter((child) => child.side === 'left');
+  const rightH = rights.reduce((sum, child) => sum + estimateSubtreeHeight(child, 1), 0);
+  const leftH = lefts.reduce((sum, child) => sum + estimateSubtreeHeight(child, 1), 0);
+  // Empty leaf at depth 1 — same size class as other root children.
+  const newH = estimateSubtreeHeight(createNode({ text: ' ' }), 1);
+  const half = (rightH + leftH + newH) / 2;
+  return rightH < half ? 'right' : 'left';
 };
 
 /**
@@ -296,19 +345,7 @@ export const applyRootLayoutMode = (
     return next;
   }
 
-  let leftW = 0;
-  let rightW = 0;
-  for (const child of next.children) {
-    const w = subtreeWeight(child);
-    if (rightW <= leftW) {
-      child.side = 'right';
-      rightW += w;
-    } else {
-      child.side = 'left';
-      leftW += w;
-    }
-  }
-  return next;
+  return applyClockwiseMapLayout(next);
 };
 
 /** Infer map vs tree from an explicit view_state value, else from existing sides. */

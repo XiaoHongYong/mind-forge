@@ -75,6 +75,7 @@ import {
   addSibling as addSiblingOp,
   addUrl,
   applyRootLayoutMode,
+  applyClockwiseMapLayout,
   cloneSubtreeWithNewIds,
   editNode,
   editNodes,
@@ -82,7 +83,6 @@ import {
   insertAfter,
   moveSibling,
   nextInCycle,
-  pickBalancedSide,
   removeNode as removeNodeOp,
   removeNodes,
   removeUrl,
@@ -708,32 +708,39 @@ export function DesktopMindMapEditor({
   // ══════════════════════════════════════════════════════════════════════════
 
   const addChild = useCallback((parentId: string, side?: 'left' | 'right') => {
-    const resolvedSide = parentId === 'root' && side == null && layoutMode === 'map'
-      ? pickBalancedSide(root)
-      : side;
-    const inserted = addChildOp(root, parentId, resolvedSide);
+    const autoMap = parentId === 'root' && side == null && layoutMode === 'map';
+    const inserted = addChildOp(root, parentId, autoMap ? 'right' : side);
     if (!inserted) return;
-    if (inserted.side === 'left') setRootLeftCollapsed(false);
-    if (inserted.side === 'right') setRootRightCollapsed(false);
-    mutate(inserted.root);
-    setTimeout(() => { setSelectedId(inserted.node.id); startEditing(inserted.node); }, 30);
+    const nextRoot = autoMap ? applyClockwiseMapLayout(inserted.root) : inserted.root;
+    const placed = findNode(nextRoot, inserted.node.id)?.node ?? inserted.node;
+    if (placed.side === 'left') setRootLeftCollapsed(false);
+    if (placed.side !== 'left' && parentId === 'root') setRootRightCollapsed(false);
+    mutate(nextRoot);
+    setTimeout(() => { setSelectedId(placed.id); startEditing(placed); }, 30);
   }, [root, mutate, layoutMode]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const addSibling = useCallback((nodeId: string) => {
     const inserted = addSiblingOp(root, nodeId);
     if (!inserted) return;
-    if (inserted.side === 'left') setRootLeftCollapsed(false);
-    if (inserted.side === 'right') setRootRightCollapsed(false);
-    mutate(inserted.root);
-    setTimeout(() => { setSelectedId(inserted.node.id); startEditing(inserted.node); }, 30);
-  }, [root, mutate]);  // eslint-disable-line react-hooks/exhaustive-deps
+    const nextRoot = layoutMode === 'map' && inserted.side != null
+      ? applyClockwiseMapLayout(inserted.root)
+      : inserted.root;
+    const placed = findNode(nextRoot, inserted.node.id)?.node ?? inserted.node;
+    if (placed.side === 'left') setRootLeftCollapsed(false);
+    if (placed.side === 'right') setRootRightCollapsed(false);
+    mutate(nextRoot);
+    setTimeout(() => { setSelectedId(placed.id); startEditing(placed); }, 30);
+  }, [root, mutate, layoutMode]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const deleteNode = useCallback((nodeId: string) => {
     const removed = removeNodeOp(root, nodeId);
     if (!removed) return;
     setSelectedId(removed.parentId);
-    mutate(removed.root);
-  }, [root, mutate]);
+    const nextRoot = layoutMode === 'map' && removed.parentId === 'root'
+      ? applyClockwiseMapLayout(removed.root)
+      : removed.root;
+    mutate(nextRoot);
+  }, [root, mutate, layoutMode]);
 
   const toggleCollapse = useCallback((nodeId: string) => {
     const next = editNode(root, nodeId, (node) => {
@@ -823,14 +830,16 @@ export function DesktopMindMapEditor({
 
   // ── Reparent (drag-drop) ──────────────────────────────────────────────────
   const reparentNode = useCallback((nodeId: string, newParentId: string) => {
-    const side = newParentId === 'root' && layoutMode === 'map'
-      ? pickBalancedSide(root)
-      : newParentId === 'root' ? 'right' : undefined;
-    const next = reparentNodeOp(root, nodeId, newParentId, side);
-    if (!next) return;
-    if (side === 'left') setRootLeftCollapsed(false);
-    if (side === 'right') setRootRightCollapsed(false);
-    mutate(next);
+    const side = newParentId === 'root' ? 'right' : undefined;
+    const moved = reparentNodeOp(root, nodeId, newParentId, side);
+    if (!moved) return;
+    const nextRoot = layoutMode === 'map' && newParentId === 'root'
+      ? applyClockwiseMapLayout(moved)
+      : moved;
+    const placed = findNode(nextRoot, nodeId)?.node;
+    if (placed?.side === 'left') setRootLeftCollapsed(false);
+    if (placed && newParentId === 'root' && placed.side !== 'left') setRootRightCollapsed(false);
+    mutate(nextRoot);
     setSelectedId(nodeId);
   }, [root, mutate, layoutMode]);
 

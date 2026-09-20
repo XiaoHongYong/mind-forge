@@ -4,6 +4,7 @@ import { countNodes, findNode } from '../../MindMapHelpers';
 import {
   addChild,
   applyRootLayoutMode,
+  applyClockwiseMapLayout,
   editNodes,
   removeNodes,
   addSibling,
@@ -187,16 +188,55 @@ describe('reparentNode', () => {
 });
 
 describe('root layout mode', () => {
-  it('balances root children left and right by subtree weight', () => {
+  it('splits at the midpoint that balances expanded heights (clockwise)', () => {
+    // Equal heights → cut in the middle; left side stored top→bottom so the
+    // first topic past the cut sits at the bottom (clockwise).
     const root = node('root', [
-      node('a', [node('a1'), node('a2')]),
+      node('a'),
+      node('b'),
+      node('c'),
+      node('d'),
+    ]);
+    const mapped = applyClockwiseMapLayout(root);
+    expect(mapped.children.map((c) => c.id)).toEqual(['a', 'b', 'd', 'c']);
+    expect(mapped.children.map((c) => c.side)).toEqual(['right', 'right', 'left', 'left']);
+  });
+
+  it('picks the evenest cut, not a greedy fill-until-half', () => {
+    // Many light leaves then one very tall branch: a greedy "cum < half"
+    // pass would drag the tall branch onto the right as well; the evenest
+    // cut leaves it on the left.
+    const root = node('root', [
+      node('a'),
+      node('b'),
+      node('c'),
+      node('d'),
+      node('e'),
+      node('tall', [
+        node('t1'), node('t2'), node('t3'),
+        node('t4'), node('t5'), node('t6'),
+      ]),
+    ]);
+    const mapped = applyClockwiseMapLayout(root);
+    const rights = mapped.children.filter((c) => c.side !== 'left').map((c) => c.id);
+    const lefts = mapped.children.filter((c) => c.side === 'left').map((c) => c.id);
+    expect(lefts).toContain('tall');
+    expect(rights).not.toContain('tall');
+  });
+
+  it('keeps a leading tall branch alone on the right when that is more even', () => {
+    const root = node('root', [
+      node('tall', [node('t1'), node('t2'), node('t3')]),
       node('b'),
       node('c'),
     ]);
     const mapped = applyRootLayoutMode(root, 'map');
-    const sides = mapped.children.map((c) => c.side);
-    // a (weight 3) → right; then b and c fill the lighter left side.
-    expect(sides).toEqual(['right', 'left', 'left']);
+    const byId = Object.fromEntries(mapped.children.map((c) => [c.id, c.side]));
+    expect(byId.tall).toBe('right');
+    expect(byId.b).toBe('left');
+    expect(byId.c).toBe('left');
+    // Clockwise on the left: b then c → stored top→bottom as c, b
+    expect(mapped.children.filter((c) => c.side === 'left').map((c) => c.id)).toEqual(['c', 'b']);
   });
 
   it('puts every root child on the right in tree mode', () => {
@@ -208,12 +248,12 @@ describe('root layout mode', () => {
     expect(tree.children.every((c) => c.side === 'right')).toBe(true);
   });
 
-  it('picks the lighter side for the next root child', () => {
+  it('prefers the right while it is still under half the total height', () => {
     const root = node('root', [
-      { ...node('a', [node('a1')]), side: 'right' } as MindMapTreeNode,
-      { ...node('b'), side: 'left' } as MindMapTreeNode,
+      { ...node('a'), side: 'right' } as MindMapTreeNode,
     ]);
     expect(pickBalancedSide(root)).toBe('left');
+    expect(pickBalancedSide(node('root', []))).toBe('right');
   });
 
   it('infers map mode from left-side children when nothing was saved', () => {

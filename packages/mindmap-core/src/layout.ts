@@ -12,6 +12,33 @@ import { H_GAP, V_GAP } from './constants';
 import { describeNode, measureNodeSize, nodeScaleForDepth } from './geometry';
 import type { DescribeNode, LayoutEntry, LayoutNode } from './types';
 
+/**
+ * Visual height of an expanded subtree at `depth`, matching `layoutTree`'s
+ * first pass: max(own box, stacked children + gaps). Collapsed nodes stop
+ * at their own box.
+ */
+export const estimateSubtreeHeight = <N extends LayoutNode<N>>(
+  node: N,
+  depth: number,
+  describe: DescribeNode<N> = describeNode,
+): number => {
+  const scale = nodeScaleForDepth(depth);
+  const parts = describe(node);
+  const { h } = measureNodeSize(node, parts, scale);
+  const visualH = h + parts.visualTopExtra * scale;
+
+  if (!node.children || node.children.length === 0 || node.collapsed) {
+    return visualH;
+  }
+
+  let childrenH = 0;
+  node.children.forEach((ch, i) => {
+    childrenH += estimateSubtreeHeight(ch, depth + 1, describe);
+    if (i > 0) childrenH += V_GAP;
+  });
+  return Math.max(visualH, childrenH);
+};
+
 export const layoutTree = <N extends LayoutNode<N>>(
   root: N,
   startX = 0,
