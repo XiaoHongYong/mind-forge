@@ -38,9 +38,19 @@ interface TestNode extends LayoutNode<TestNode> {}
 const node = (over: Partial<TestNode> = {}): TestNode =>
   ({ id: 'n', text: 'hello', children: [], ...over }) as TestNode;
 
+describe('nodeScaleForDepth', () => {
+  it('uses NODE_LEVEL_SCALE_RATIO between root, level-1 and deeper', () => {
+    const r = layout.NODE_LEVEL_SCALE_RATIO;
+    expect(layout.nodeScaleForDepth(0)).toBe(r * r);
+    expect(layout.nodeScaleForDepth(1)).toBe(r);
+    expect(layout.nodeScaleForDepth(2)).toBe(1);
+    expect(layout.nodeScaleForDepth(5)).toBe(1);
+  });
+});
+
 describe('measureNodeSize', () => {
-  const measure = (over: Partial<TestNode> = {}) =>
-    layout.measureNodeSize(node(over));
+  const measure = (over: Partial<TestNode> = {}, scale = 1) =>
+    layout.measureNodeSize(node(over), undefined, scale);
 
   it('gives a plain one-line node the minimum height', () => {
     const { w, h, lines } = measure();
@@ -48,6 +58,13 @@ describe('measureNodeSize', () => {
     expect(w).toBe(80);
     expect(h).toBe(36); // NODE_MIN_H wins over 1 * 20 + 2 * 8
     expect(lines).toEqual(['hello']);
+  });
+
+  it('scales width and height by the hierarchy factor', () => {
+    const base = measure({ text: 'x' }, 1);
+    const scaled = measure({ text: 'x' }, 2);
+    expect(scaled.w / base.w).toBeCloseTo(2, 5);
+    expect(scaled.h / base.h).toBeCloseTo(2, 5);
   });
 
   it('grows by a line height once the text needs more than two lines', () => {
@@ -210,6 +227,25 @@ describe('layoutTree', () => {
     expect(pos.a.direction).toBe('right');
   });
 
+  it('scales root / level-1 / deeper by NODE_LEVEL_SCALE_RATIO', () => {
+    const root = node({
+      id: 'root',
+      text: 'x',
+      children: [node({ id: 'l1', text: 'x', children: [node({ id: 'deep', text: 'x' })] })],
+    });
+    const pos = layout.layoutTree(root, 0, 0);
+    const ratio = layout.NODE_LEVEL_SCALE_RATIO;
+    expect(pos.root.depth).toBe(0);
+    expect(pos.l1.depth).toBe(1);
+    expect(pos.deep.depth).toBe(2);
+    expect(pos.root.scale).toBe(ratio * ratio);
+    expect(pos.l1.scale).toBe(ratio);
+    expect(pos.deep.scale).toBe(1);
+    // Same one-line text: box size tracks the hierarchy scale.
+    expect(pos.root.h / pos.l1.h).toBeCloseTo(ratio, 5);
+    expect(pos.l1.h / pos.deep.h).toBeCloseTo(ratio, 5);
+  });
+
   it('sends nodes marked side:left to the other side', () => {
     const root = node({
       id: 'root',
@@ -248,10 +284,11 @@ describe('layoutTree', () => {
     const dated = layout.layoutTree(
       node({ id: 'root', startDate: '2026-01-01' } as Partial<TestNode>), 0, 0,
     );
+    const rootScale = layout.nodeScaleForDepth(0);
     expect(plain.root.visualTopExtra).toBe(0);
-    expect(dated.root.visualTopExtra).toBe(34); // DATE_BADGE_OFFSET_H
+    expect(dated.root.visualTopExtra).toBe(34 * rootScale); // DATE_BADGE_OFFSET_H × scale
     // the badge pushes the box down by half of what it adds
-    expect(dated.root.y - plain.root.y).toBe(17);
+    expect(dated.root.y - plain.root.y).toBe((34 * rootScale) / 2);
   });
 
   it('sizes a subtree by its children when they are taller than the parent', () => {
@@ -280,7 +317,7 @@ describe('layoutTree', () => {
     const withExternal = layout.layoutTree(root, 0, 0, (n) =>
       layout.describeNode(n, { attachmentCount: 1 }),
     );
-    expect(withExternal.root.h - plain.root.h).toBe(18);
+    expect(withExternal.root.h - plain.root.h).toBe(18 * layout.nodeScaleForDepth(0));
   });
 });
 

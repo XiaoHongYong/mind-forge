@@ -39,7 +39,9 @@ export interface NodeVisual {
   strokeColor: string;
   textColor: string;
   fontSize: number;
-  fontWeight: 'bold' | 'normal';
+  fontWeight: 'bold' | 'normal' | number;
+  /** Hierarchy size multiplier from layout (`nodeScaleForDepth`). */
+  scale: number;
 }
 
 interface BandProps {
@@ -107,22 +109,25 @@ export function AttachmentIndicator({
   y,
   count,
   ownColor,
+  scale = 1,
 }: {
   x: number;
   y: number;
   count: number;
   ownColor: string | null;
+  scale?: number;
 }): JSX.Element {
-  const indicatorWidth = count > 1 ? 28 : 18;
-  const iconX = x - indicatorWidth / 2 + 5;
-  const textX = x + indicatorWidth / 2 - 6;
+  const s = scale;
+  const indicatorWidth = (count > 1 ? 28 : 18) * s;
+  const iconX = x - indicatorWidth / 2 + 5 * s;
+  const textX = x + indicatorWidth / 2 - 6 * s;
   const stroke = ownColor ? '#ffffffcc' : '#cbd5e1';
   const fill = ownColor ? 'rgba(15, 23, 42, 0.34)' : 'rgba(15, 23, 42, 0.82)';
   return (
     <g className="mm-attachment-indicator">
-      <rect x={x - indicatorWidth / 2} y={y - 7} width={indicatorWidth} height={14} rx={7} fill={fill} stroke={stroke} strokeWidth={1} />
+      <rect x={x - indicatorWidth / 2} y={y - 7 * s} width={indicatorWidth} height={14 * s} rx={7 * s} fill={fill} stroke={stroke} strokeWidth={1} />
       <path
-        d={`M ${iconX} ${y + 1.5} l 4.1 -4.1 a 2.2 2.2 0 1 1 3.1 3.1 l -4.8 4.8 a 3.3 3.3 0 1 1 -4.7 -4.7 l 4.2 -4.2`}
+        d={`M ${iconX} ${y + 1.5 * s} l ${4.1 * s} ${-4.1 * s} a ${2.2 * s} ${2.2 * s} 0 1 1 ${3.1 * s} ${3.1 * s} l ${-4.8 * s} ${4.8 * s} a ${3.3 * s} ${3.3 * s} 0 1 1 ${-4.7 * s} ${-4.7 * s} l ${4.2 * s} ${-4.2 * s}`}
         fill="none"
         stroke={stroke}
         strokeWidth={1.1}
@@ -130,7 +135,7 @@ export function AttachmentIndicator({
         strokeLinejoin="round"
       />
       {count > 1 && (
-        <text x={textX} y={y + 0.5} textAnchor="middle" dominantBaseline="middle" fontSize={8.5} fontWeight="700" fill={ownColor ? '#ffffff' : '#f8fafc'}>
+        <text x={textX} y={y + 0.5 * s} textAnchor="middle" dominantBaseline="middle" fontSize={8.5 * s} fontWeight="700" fill={ownColor ? '#ffffff' : '#f8fafc'}>
           {count}
         </text>
       )}
@@ -148,20 +153,22 @@ export function AttachmentIndicator({
  */
 export function MetaBand({ box, geom, parts, visual }: BandProps): JSX.Element | null {
   if (parts.topMetaH === 0) return null;
+  const s = visual.scale;
   const { hasNote, attachmentCount } = parts;
   return (
     <>
       <BandDivider box={box} y={geom.tagTopY} ownColor={visual.ownColor} />
       {attachmentCount > 0 && (
         <AttachmentIndicator
-          x={box.x + box.w - (hasNote ? 26 : 11)}
+          x={box.x + box.w - (hasNote ? 26 : 11) * s}
           y={geom.metaCentreY}
           count={attachmentCount}
           ownColor={visual.ownColor}
+          scale={s}
         />
       )}
       {hasNote && (
-        <circle cx={box.x + box.w - 7} cy={geom.metaCentreY} r={5} fill="#f59e0b" className="mm-indicator" />
+        <circle cx={box.x + box.w - 7 * s} cy={geom.metaCentreY} r={5 * s} fill="#f59e0b" className="mm-indicator" />
       )}
     </>
   );
@@ -181,35 +188,38 @@ export function TagBand({
   userLabels,
 }: BandProps & { userLabels: Array<{ name: string; color: string }> }): JSX.Element | null {
   if (parts.tagCount === 0) return null;
+  const s = visual.scale;
+  const tagH = TAG_H * s;
+  const tagGap = TAG_GAP * s;
   const tags = parts.tags.slice(0, MAX_TAGS_DRAWN);
   const compact = tags.map((tag) => {
     const txt = tag.length > 14 ? `${tag.slice(0, 13)}…` : tag;
     return {
       tag,
       txt,
-      width: Math.min(box.w - 8, Math.max(18, 8 + txt.length * 5.5)),
+      width: Math.min(box.w - 8 * s, Math.max(18 * s, (8 + txt.length * 5.5) * s)),
       color: userLabels.find((label) => label.name === tag)?.color ?? 'var(--accent)',
     };
   });
-  const totalW = compact.reduce((sum, item) => sum + item.width, 0) + (compact.length - 1) * TAG_GAP;
-  const tagY = geom.tagTopY + (TAG_STRIP_H - TAG_H) / 2;
-  let cursorX = box.x + Math.max(4, (box.w - totalW) / 2);
+  const totalW = compact.reduce((sum, item) => sum + item.width, 0) + (compact.length - 1) * tagGap;
+  const tagY = geom.tagTopY + (TAG_STRIP_H * s - tagH) / 2;
+  let cursorX = box.x + Math.max(4 * s, (box.w - totalW) / 2);
 
   return (
     <>
       <BandDivider box={box} y={geom.tagBottomY} ownColor={visual.ownColor} />
       {compact.map((item) => {
         const x = cursorX;
-        cursorX += item.width + TAG_GAP;
+        cursorX += item.width + tagGap;
         return (
           <g key={item.tag} pointerEvents="none">
-            <rect x={x} y={tagY} width={item.width} height={TAG_H} rx={6.5} fill={item.color} opacity={0.92} />
+            <rect x={x} y={tagY} width={item.width} height={tagH} rx={6.5 * s} fill={item.color} opacity={0.92} />
             <text
               x={x + item.width / 2}
-              y={tagY + TAG_H / 2 + 0.5}
+              y={tagY + tagH / 2 + 0.5 * s}
               textAnchor="middle"
               dominantBaseline="middle"
-              fontSize={8.5}
+              fontSize={8.5 * s}
               fontWeight={700}
               fill="#fff"
             >
@@ -242,18 +252,21 @@ export function ImageBand({
   image: NodeImage;
   onOpen: () => void;
 }): JSX.Element {
+  const s = box.scale ?? 1;
+  const w = image.w * s;
+  const h = image.h * s;
   return (
     <image
       href={image.thumb}
-      x={box.x + (box.w - image.w) / 2}
+      x={box.x + (box.w - w) / 2}
       y={geom.imageY}
-      width={image.w}
-      height={image.h}
+      width={w}
+      height={h}
       className="mm-node-image"
       // Inline, not in the stylesheet: the export serializes this element into
       // a standalone SVG where no class rule follows it, and a glyph with
       // square corners in the PDF would not match the canvas.
-      style={{ clipPath: 'inset(0 round 5px)' }}
+      style={{ clipPath: `inset(0 round ${5 * s}px)` }}
       onClick={(e) => { e.stopPropagation(); onOpen(); }}
     >
       <title>{image.name ?? 'Image'}</title>
@@ -293,7 +306,7 @@ export function ProgressPie({
       <g>
         <circle cx={cx} cy={cy} r={r} fill="var(--mm-node-fill)" stroke="var(--mm-node-stroke)" strokeWidth={1} />
         {piePath && <path d={piePath} fill="var(--accent)" opacity={0.8} />}
-        <text x={cx} y={cy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={11} fontWeight="bold" fill="var(--mm-node-text)">{pct}%</text>
+        <text x={cx} y={cy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={size * 0.34} fontWeight="bold" fill="var(--mm-node-text)">{pct}%</text>
       </g>
     );
   })();
@@ -336,34 +349,40 @@ export function BodyBand({
   editor: JSX.Element | null;
   checkedInfo: { checked: number; total: number } | null;
 }): JSX.Element {
+  const s = visual.scale;
+  const padX = NODE_PAD_X * s;
+  const checkbox = CHECKBOX_SIZE * s;
+  const iconSize = ICON_SIZE * s;
+  const pieSize = PROGRESS_PIE_SIZE * s;
+  const lineH = NODE_LINE_H * s;
   const { hasCheckbox, hasProgress, iconCount, lines } = parts;
-  const iconsX = box.x + NODE_PAD_X + (hasCheckbox ? CHECKBOX_SIZE + 6 : 0) - 2;
+  const iconsX = box.x + padX + (hasCheckbox ? checkbox + 6 * s : 0) - 2 * s;
 
   return (
     <>
       {hasCheckbox && (
         <g className="mm-checkbox-g" onClick={(e) => { e.stopPropagation(); actions.onToggleCheckbox(node.id); }} style={{ cursor: 'pointer' }}>
           <rect
-            x={box.x + NODE_PAD_X - 2}
-            y={geom.centreY - CHECKBOX_SIZE / 2}
-            width={CHECKBOX_SIZE}
-            height={CHECKBOX_SIZE}
-            rx={3}
+            x={box.x + padX - 2 * s}
+            y={geom.centreY - checkbox / 2}
+            width={checkbox}
+            height={checkbox}
+            rx={3 * s}
             fill={node.checked ? 'var(--accent)' : 'transparent'}
             stroke={node.checked ? 'var(--accent)' : (visual.ownColor ? '#ffffff88' : 'var(--mm-node-stroke)')}
             strokeWidth={1.5}
           />
           {node.checked && (
-            <path d={`M ${box.x + NODE_PAD_X + 2} ${geom.centreY} l 3 3 5 -6`} fill="none" stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+            <path d={`M ${box.x + padX + 2 * s} ${geom.centreY} l ${3 * s} ${3 * s} ${5 * s} ${-6 * s}`} fill="none" stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
           )}
         </g>
       )}
 
       {iconCount > 0 && !editor && (
-        <g transform={`translate(${iconsX}, ${geom.centreY - ICON_SIZE / 2})`} style={{ pointerEvents: 'none' }}>
+        <g transform={`translate(${iconsX}, ${geom.centreY - iconSize / 2})`} style={{ pointerEvents: 'none' }}>
           {(node.icons ?? []).map((iconName, ii) => (
-            <g key={`${iconName}-${ii}`} transform={`translate(${ii * (ICON_SIZE + 4)}, 0)`}>
-              <DynamicLucideIcon name={iconName} size={ICON_SIZE} color={visual.textColor} />
+            <g key={`${iconName}-${ii}`} transform={`translate(${ii * (iconSize + 4 * s)}, 0)`}>
+              <DynamicLucideIcon name={iconName} size={iconSize} color={visual.textColor} />
             </g>
           ))}
         </g>
@@ -371,10 +390,10 @@ export function BodyBand({
 
       {hasProgress && (
         <ProgressPie
-          cx={iconsX + 2 + (iconCount > 0 ? (ICON_SIZE + 4) * iconCount + 2 : 0) + PROGRESS_PIE_SIZE / 2}
+          cx={iconsX + 2 * s + (iconCount > 0 ? (iconSize + 4 * s) * iconCount + 2 * s : 0) + pieSize / 2}
           cy={geom.centreY}
           pct={node.progress!}
-          size={PROGRESS_PIE_SIZE}
+          size={pieSize}
           onClickPie={() => actions.onCycleProgress(node.id)}
         />
       )}
@@ -383,7 +402,7 @@ export function BodyBand({
         <text
           key={li}
           x={geom.textCentreX}
-          y={geom.lineStartY + li * NODE_LINE_H}
+          y={geom.lineStartY + li * lineH}
           textAnchor="middle"
           dominantBaseline="middle"
           fontSize={visual.fontSize}
@@ -397,10 +416,10 @@ export function BodyBand({
 
       {checkedInfo && checkedInfo.total > 0 && (
         <text
-          x={box.x + box.w - 8}
-          y={geom.bodyTopY + geom.bodyH - 6}
+          x={box.x + box.w - 8 * s}
+          y={geom.bodyTopY + geom.bodyH - 6 * s}
           textAnchor="end"
-          fontSize={9}
+          fontSize={9 * s}
           fill={visual.ownColor ? '#ffffff99' : 'var(--mm-statusbar-text)'}
         >
           {checkedInfo.checked}/{checkedInfo.total}
@@ -413,9 +432,10 @@ export function BodyBand({
 // ── Footer: the vault link strip, then one strip per URL ────────
 
 /** The little three-panel vault mark that fronts a vault-link strip. */
-function VaultGlyph({ x, y, colour }: { x: number; y: number; colour: string }): JSX.Element {
+function VaultGlyph({ x, y, colour, scale = 1 }: { x: number; y: number; colour: string; scale?: number }): JSX.Element {
+  const s = scale;
   return (
-    <g transform={`translate(${x - 4}, ${y - 4})`} pointerEvents="none">
+    <g transform={`translate(${x - 4 * s}, ${y - 4 * s}) scale(${s})`} pointerEvents="none">
       <path
         d="M 0 1 L 3 0 L 6 1.5 L 9 0 L 9 7 L 6 8.5 L 3 7 L 0 8 Z"
         fill="none"
@@ -438,6 +458,8 @@ export function FooterBand({ box, geom, parts, node, visual, onOpenLink }: {
   onOpenLink?: (path: string) => void;
 }): JSX.Element | null {
   if (parts.footerH === 0) return null;
+  const s = visual.scale;
+  const stripH = LINK_STRIP_H * s;
   const link = parts.link;
   // The vault link takes the first strip; the URLs follow it.
   const urlOffset = link ? 1 : 0;
@@ -445,18 +467,18 @@ export function FooterBand({ box, geom, parts, node, visual, onOpenLink }: {
     <>
       {link && (
         <g key="vault-link">
-          <BandDivider box={box} y={geom.footerTopY} ownColor={visual.ownColor} inset={4} />
+          <BandDivider box={box} y={geom.footerTopY} ownColor={visual.ownColor} inset={4 * s} />
           <g
             className="mm-vault-link"
             style={{ cursor: onOpenLink ? 'pointer' : 'default' }}
             onMouseDown={(e) => { e.stopPropagation(); }}
             onClick={(e) => { e.stopPropagation(); onOpenLink?.(link.path); }}
           >
-            <VaultGlyph x={box.x + 8} y={geom.footerTopY + LINK_STRIP_H / 2} colour={visual.ownColor ? '#ffffff' : 'var(--accent)'} />
+            <VaultGlyph x={box.x + 8 * s} y={geom.footerTopY + stripH / 2} colour={visual.ownColor ? '#ffffff' : 'var(--accent)'} scale={s} />
             <text
-              x={box.x + 20}
-              y={geom.footerTopY + LINK_STRIP_H / 2 + 1.5}
-              fontSize={10}
+              x={box.x + 20 * s}
+              y={geom.footerTopY + stripH / 2 + 1.5 * s}
+              fontSize={10 * s}
               fontWeight={600}
               fill={visual.ownColor ? '#ffffff' : 'var(--accent)'}
               dominantBaseline="middle"
@@ -467,16 +489,16 @@ export function FooterBand({ box, geom, parts, node, visual, onOpenLink }: {
         </g>
       )}
       {(node.urls ?? []).map((urlItem, ui) => {
-        const fy = geom.footerTopY + (ui + urlOffset) * LINK_STRIP_H;
+        const fy = geom.footerTopY + (ui + urlOffset) * stripH;
         const rawUrl = (urlItem.url ?? '').trim();
         const openUrl = /^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`;
         return (
           <g key={`url-${ui}`}>
-            <BandDivider box={box} y={fy} ownColor={visual.ownColor} inset={4} opacity="33" />
+            <BandDivider box={box} y={fy} ownColor={visual.ownColor} inset={4 * s} opacity="33" />
             <text
-              x={box.x + 8}
-              y={fy + LINK_STRIP_H / 2 + 1.5}
-              fontSize={10.5}
+              x={box.x + 8 * s}
+              y={fy + stripH / 2 + 1.5 * s}
+              fontSize={10.5 * s}
               fontWeight={600}
               fill={visual.ownColor ? '#ffffff' : 'var(--accent)'}
               dominantBaseline="middle"

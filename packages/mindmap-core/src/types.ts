@@ -149,6 +149,13 @@ export interface LayoutEntry<N> {
   visualTopExtra: number;
   subtreeH: number;
   direction: 'left' | 'right';
+  /**
+   * Visual size multiplier from depth (`nodeScaleForDepth`). Measuring and
+   * drawing both read this so the box and its contents stay in step.
+   */
+  scale: number;
+  /** Depth from the root (root = 0). */
+  depth: number;
   node: N;
   /** What this node was measured from. The renderer draws from the same parts. */
   parts: NodeParts;

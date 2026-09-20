@@ -19,7 +19,7 @@ import {
  */
 
 const entry = (x: number, y: number, w = 80, h = 36) =>
-  ({ x, y, w, h, visualTopExtra: 0, subtreeH: h, direction: 'right', node: {} as MindMapTreeNode, parts: {} as never });
+  ({ x, y, w, h, visualTopExtra: 0, subtreeH: h, direction: 'right' as const, scale: 1, depth: 2, node: {} as MindMapTreeNode, parts: {} as never });
 
 const layout = (entries: Record<string, ReturnType<typeof entry>>): Layout =>
   entries as unknown as Layout;

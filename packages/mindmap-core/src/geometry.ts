@@ -29,6 +29,8 @@ import {
   CHECKBOX_SIZE,
   PROGRESS_PIE_SIZE,
   NODE_IMAGE_PAD,
+  NODE_LEVEL_SCALE_RATIO,
+  NODE_BASE_FONT_SIZE,
 } from './constants';
 import { getVisibleNodeTextLines } from './text';
 import type {
@@ -39,6 +41,19 @@ import type {
   NodeParts,
   NodeSize,
 } from './types';
+
+// ── Hierarchy scale ─────────────────────────────────────────────
+
+/**
+ * XMind-style size ladder from depth: root → L1 → deeper.
+ * Uses `NODE_LEVEL_SCALE_RATIO` so the "2×" between tiers is one editable float.
+ */
+export const nodeScaleForDepth = (depth: number): number => {
+  const ratio = NODE_LEVEL_SCALE_RATIO;
+  if (depth <= 0) return ratio * ratio;
+  if (depth === 1) return ratio;
+  return 1;
+};
 
 // ── Text measurement ────────────────────────────────────────────
 
@@ -121,18 +136,29 @@ export const describeNode = <N extends LayoutNode<N>>(
 export const measureNodeSize = <N extends LayoutNode<N>>(
   node: N,
   parts: NodeParts = describeNode(node),
+  scale = 1,
 ): NodeSize => {
-  const urlW = parts.urlCount > 0 ? 120 : 0;
-  const linkW = parts.link ? measureText(parts.link.label, 10) + 24 : 0;
-  const maxW = Math.max(...parts.lines.map((line) => measureText(line || ' ')), linkW, urlW);
+  const s = scale;
+  const fontSize = NODE_BASE_FONT_SIZE * s;
+  const urlW = parts.urlCount > 0 ? 120 * s : 0;
+  const linkW = parts.link ? measureText(parts.link.label, 10 * s) + 24 * s : 0;
+  const maxW = Math.max(
+    ...parts.lines.map((line) => measureText(line || ' ', fontSize)),
+    linkW,
+    urlW,
+  );
 
-  const textW = Math.max(MIN_W, maxW + NODE_PAD_X * 2 + parts.leftPad);
-  const imageW = parts.image ? parts.image.w + NODE_PAD_X * 2 : 0;
-  const bodyH = Math.max(NODE_MIN_H, parts.lines.length * NODE_LINE_H + NODE_PAD_Y * 2);
+  const textW = Math.max(MIN_W * s, maxW + NODE_PAD_X * 2 * s + parts.leftPad * s);
+  const imageW = parts.image ? parts.image.w * s + NODE_PAD_X * 2 * s : 0;
+  const bodyH = Math.max(
+    NODE_MIN_H * s,
+    parts.lines.length * NODE_LINE_H * s + NODE_PAD_Y * 2 * s,
+  );
+  const bandsH = (parts.topMetaH + parts.topTagH + parts.imageBandH + parts.footerH) * s;
 
   return {
     w: Math.max(textW, imageW),
-    h: bodyH + parts.topMetaH + parts.topTagH + parts.imageBandH + parts.footerH,
+    h: bodyH + bandsH,
     lines: parts.lines,
   };
 };
@@ -144,23 +170,29 @@ export const measureNodeSize = <N extends LayoutNode<N>>(
  * where does each band start. `bodyH` here is by construction the same number
  * `measureNodeSize` added the bands to.
  */
-export const nodeGeometry = (box: NodeBox, parts: NodeParts): NodeGeometry => {
-  const bandsAboveBody = parts.topMetaH + parts.topTagH + parts.imageBandH;
+export const nodeGeometry = (box: NodeBox, parts: NodeParts, scale = 1): NodeGeometry => {
+  const s = scale;
+  const topMetaH = parts.topMetaH * s;
+  const topTagH = parts.topTagH * s;
+  const imageBandH = parts.imageBandH * s;
+  const footerH = parts.footerH * s;
+  const bandsAboveBody = topMetaH + topTagH + imageBandH;
   const bodyTopY = box.y + bandsAboveBody;
-  const bodyH = box.h - bandsAboveBody - parts.footerH;
-  const textX = box.x + NODE_PAD_X + parts.leftPad;
+  const bodyH = box.h - bandsAboveBody - footerH;
+  const textX = box.x + NODE_PAD_X * s + parts.leftPad * s;
+  const lineH = NODE_LINE_H * s;
 
   return {
-    metaCentreY: box.y + parts.topMetaH / 2,
-    tagTopY: box.y + parts.topMetaH,
-    tagBottomY: box.y + parts.topMetaH + parts.topTagH,
-    imageY: box.y + parts.topMetaH + parts.topTagH + NODE_IMAGE_PAD / 2,
+    metaCentreY: box.y + topMetaH / 2,
+    tagTopY: box.y + topMetaH,
+    tagBottomY: box.y + topMetaH + topTagH,
+    imageY: box.y + topMetaH + topTagH + (NODE_IMAGE_PAD * s) / 2,
     bodyTopY,
     bodyH,
     centreY: bodyTopY + bodyH / 2,
     textX,
-    textCentreX: textX + (box.w - NODE_PAD_X * 2 - parts.leftPad) / 2,
-    lineStartY: bodyTopY + bodyH / 2 - ((parts.lines.length - 1) * NODE_LINE_H) / 2,
+    textCentreX: textX + (box.w - NODE_PAD_X * 2 * s - parts.leftPad * s) / 2,
+    lineStartY: bodyTopY + bodyH / 2 - ((parts.lines.length - 1) * lineH) / 2,
     footerTopY: bodyTopY + bodyH,
   };
 };

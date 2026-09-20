@@ -69,4 +69,6 @@ export {
   PROGRESS_PIE_SIZE,
   NODE_IMAGE_BOX,
   NODE_IMAGE_PAD,
+  NODE_LEVEL_SCALE_RATIO,
+  NODE_BASE_FONT_SIZE,
 } from '@mindforge/mindmap-core';

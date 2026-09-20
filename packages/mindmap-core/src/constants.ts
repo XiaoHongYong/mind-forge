@@ -13,6 +13,14 @@ export const NODE_PAD_Y = 8;
 export const H_GAP = 40;
 export const V_GAP = 8;
 export const MIN_W = 80;
+
+/**
+ * Hierarchy size ratio (XMind-style): root = ratio² × deep, level-1 = ratio × deep.
+ * Deep nodes (depth ≥ 2) sit at scale 1. Tune this float without touching call sites.
+ */
+export const NODE_LEVEL_SCALE_RATIO = 1.5;
+/** Body text size at the deepest tier (scale = 1). */
+export const NODE_BASE_FONT_SIZE = 13;
 export const LINK_STRIP_H = 18;
 export const TAG_STRIP_H = 18;
 export const TOP_META_STRIP_H = 18;

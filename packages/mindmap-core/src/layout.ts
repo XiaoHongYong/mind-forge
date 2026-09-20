@@ -9,7 +9,7 @@
  */
 
 import { H_GAP, V_GAP } from './constants';
-import { describeNode, measureNodeSize } from './geometry';
+import { describeNode, measureNodeSize, nodeScaleForDepth } from './geometry';
 import type { DescribeNode, LayoutEntry, LayoutNode } from './types';
 
 export const layoutTree = <N extends LayoutNode<N>>(
@@ -21,29 +21,30 @@ export const layoutTree = <N extends LayoutNode<N>>(
   const pos: Record<string, Partial<LayoutEntry<N>>> = {};
 
   // First pass: compute subtree heights (bottom-up)
-  const computeHeight = (node: N): number => {
+  const computeHeight = (node: N, depth: number): number => {
+    const scale = nodeScaleForDepth(depth);
     const parts = describe(node);
-    const { w, h } = measureNodeSize(node, parts);
-    const visualTopExtra = parts.visualTopExtra;
+    const { w, h } = measureNodeSize(node, parts, scale);
+    const visualTopExtra = parts.visualTopExtra * scale;
     const visualH = h + visualTopExtra;
 
     if (!node.children || node.children.length === 0 || node.collapsed) {
-      pos[node.id] = { w, h, visualTopExtra, subtreeH: visualH, node, parts };
+      pos[node.id] = { w, h, visualTopExtra, subtreeH: visualH, scale, depth, node, parts };
       return visualH;
     }
 
     let childrenH = 0;
     node.children.forEach((ch, i) => {
-      childrenH += computeHeight(ch);
+      childrenH += computeHeight(ch, depth + 1);
       if (i > 0) childrenH += V_GAP;
     });
 
     const subtreeH = Math.max(visualH, childrenH);
-    pos[node.id] = { w, h, visualTopExtra, subtreeH, node, parts };
+    pos[node.id] = { w, h, visualTopExtra, subtreeH, scale, depth, node, parts };
     return subtreeH;
   };
 
-  computeHeight(root);
+  computeHeight(root, 0);
 
   // Second pass: assign x, y positions (top-down)
   const assignPos = (

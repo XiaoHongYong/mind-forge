@@ -52,7 +52,7 @@ import {
   defaultRoot,
   migrateNode,
 } from './MindMapHelpers';
-import { layoutTree, bezierPath, describeNode, nodeGeometry } from '@mindforge/mindmap-core';
+import { layoutTree, bezierPath, describeNode, nodeGeometry, NODE_BASE_FONT_SIZE } from '@mindforge/mindmap-core';
 import { appendAttachmentMarkdownLinks, getVisibleNodeTextLines } from '../utils/nodeAttachments';
 import { exportSvgAsPdf, renderSvgToCanvas } from '../utils/pdfExport';
 import { downloadBlob, downloadDataUrl } from '../utils/download';
@@ -2133,6 +2133,7 @@ export function DesktopMindMapEditor({
   const renderNodes = useCallback((node: MindMapTreeNode, depth = 0): JSX.Element[] => {
     const box = layout[node.id];
     if (!box) return [];
+    const scale = box.scale ?? 1;
     const isRoot = depth === 0;
     const isSelected = node.id === selectedId;
     const isEditing = node.id === editingId;
@@ -2140,7 +2141,7 @@ export function DesktopMindMapEditor({
     const ownColor = node.color ?? null;
     // Only the node's own explicit color fills the bubble — and, in
     // renderConnections, the one line coming into it. Nothing is inherited.
-    const rx = isRoot ? 18 : 8;
+    const rx = (isRoot ? 18 : 8) * scale;
 
     const fillColor = ownColor ?? (isRoot ? 'var(--mm-root-fill)' : 'var(--mm-node-fill)');
     // Selection has to win over the node's own colour and over the root's
@@ -2153,8 +2154,8 @@ export function DesktopMindMapEditor({
         : (ownColor ?? (isRoot ? 'var(--mm-root-stroke)' : 'var(--mm-node-stroke)'));
     const textColor = ownColor ? '#ffffff' : (isRoot ? 'var(--mm-root-text)' : 'var(--mm-node-text)');
 
-    const fontSize = isRoot ? 15 : 13;
-    const fontWeight = isRoot ? 'bold' : 'normal';
+    const fontSize = NODE_BASE_FONT_SIZE * scale;
+    const fontWeight = isRoot ? 'bold' : depth === 1 ? 600 : 'normal';
 
     // What the node is made of, and where each band starts, both come from the
     // entry the layout produced. Working either out again here is how the
@@ -2162,9 +2163,9 @@ export function DesktopMindMapEditor({
     // and over attachments held outside the tree — and draw an 18px strip in
     // space nothing had reserved.
     const parts = box.parts;
-    const geom = nodeGeometry(box, parts);
+    const geom = nodeGeometry(box, parts, scale);
     const nodeImage = node.image?.thumb ? node.image : null;
-    const visual: NodeVisual = { ownColor, fillColor, strokeColor, textColor, fontSize, fontWeight };
+    const visual: NodeVisual = { ownColor, fillColor, strokeColor, textColor, fontSize, fontWeight, scale };
     const checkedInfo = (node.children.length > 0 && node.checked != null) ? countChecked(node) : null;
 
     const isMulti = multiSelect.has(node.id);
