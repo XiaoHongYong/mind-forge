@@ -80,13 +80,15 @@ export const addChild = (
   const found = findNode(next, parentId);
   if (!found) return null;
 
-  const node = createNode(parentId === 'root' && side ? { side } : {});
+  const resolvedSide: 'left' | 'right' | null =
+    parentId === 'root' ? (side ?? 'right') : null;
+  const node = createNode(resolvedSide ? { side: resolvedSide } : {});
   found.node.children.push(node);
   // A node added to a collapsed parent would otherwise be invisible.
   found.node.collapsed = false;
   clearBranchCustomPositions(found.node);
 
-  return { root: next, node, side: parentId === 'root' ? (side ?? 'right') : null };
+  return { root: next, node, side: resolvedSide };
 };
 
 export const addSibling = (root: MindMapTreeNode, nodeId: string): Insertion | null => {
@@ -151,6 +153,7 @@ export const reparentNode = (
   root: MindMapTreeNode,
   nodeId: string,
   newParentId: string,
+  side?: 'left' | 'right',
 ): MindMapTreeNode | null => {
   if (nodeId === 'root' || nodeId === newParentId) return null;
   if (isDescendant(root, nodeId, newParentId)) return null;
@@ -165,6 +168,9 @@ export const reparentNode = (
   // It is being laid out by the tree again, not by wherever it was dragged.
   removed.customX = undefined;
   removed.customY = undefined;
+  // `side` only applies to root children; drop a stale value when nesting deeper.
+  if (newParentId === 'root') removed.side = side ?? 'right';
+  else delete removed.side;
   target.node.children.push(removed);
   target.node.collapsed = false;
   return next;
@@ -251,6 +257,67 @@ export const removeNodes = (root: MindMapTreeNode, nodeIds: Iterable<string>): R
     found.parent.children.splice(found.index, 1);
   }
   return { root: next, parentId };
+};
+
+// ── Root layout mode ────────────────────────────────────────────
+
+/** How root children fan out: all to the right, or balanced left/right. */
+export type RootLayoutMode = 'tree' | 'map';
+
+const subtreeWeight = (node: MindMapTreeNode): number =>
+  1 + node.children.reduce((sum, child) => sum + subtreeWeight(child), 0);
+
+/** Which side of the root currently has less weight — for inserting in map mode. */
+export const pickBalancedSide = (root: MindMapTreeNode): 'left' | 'right' => {
+  let left = 0;
+  let right = 0;
+  for (const child of root.children) {
+    const w = subtreeWeight(child);
+    if (child.side === 'left') left += w;
+    else right += w;
+  }
+  // Prefer the right when tied so the first topic matches the default tree feel.
+  return right <= left ? 'right' : 'left';
+};
+
+/**
+ * Rewrite root children's `side` for the chosen layout, and clear free-drag
+ * offsets so the automatic layout can take over.
+ */
+export const applyRootLayoutMode = (
+  root: MindMapTreeNode,
+  mode: RootLayoutMode,
+): MindMapTreeNode => {
+  const next = cloneTree(root);
+  clearBranchCustomPositions(next);
+
+  if (mode === 'tree') {
+    for (const child of next.children) child.side = 'right';
+    return next;
+  }
+
+  let leftW = 0;
+  let rightW = 0;
+  for (const child of next.children) {
+    const w = subtreeWeight(child);
+    if (rightW <= leftW) {
+      child.side = 'right';
+      rightW += w;
+    } else {
+      child.side = 'left';
+      leftW += w;
+    }
+  }
+  return next;
+};
+
+/** Infer map vs tree from an explicit view_state value, else from existing sides. */
+export const inferRootLayoutMode = (
+  root: MindMapTreeNode,
+  saved?: RootLayoutMode | null,
+): RootLayoutMode => {
+  if (saved === 'map' || saved === 'tree') return saved;
+  return root.children.some((child) => child.side === 'left') ? 'map' : 'tree';
 };
 
 // ── Positions ───────────────────────────────────────────────────

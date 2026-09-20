@@ -86,5 +86,10 @@ export interface MindMapTree {
     focus_mode?: boolean;
     focus_anchor_id?: string | null;
     selected_node_id?: string;
+    /**
+     * How root children are placed: `tree` keeps them all on the right;
+     * `map` balances them left and right around the centre (XMind-style).
+     */
+    layout_mode?: 'tree' | 'map';
   };
 }

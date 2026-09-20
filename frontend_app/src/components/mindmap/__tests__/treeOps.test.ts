@@ -3,15 +3,18 @@ import type { MindMapTreeNode } from '../../../types';
 import { countNodes, findNode } from '../../MindMapHelpers';
 import {
   addChild,
+  applyRootLayoutMode,
   editNodes,
   removeNodes,
   addSibling,
   cloneSubtreeWithNewIds,
   editNode,
+  inferRootLayoutMode,
   insertAfter,
   moveSibling,
   nextInCycle,
   nodesWithAttachments,
+  pickBalancedSide,
   removeNode,
   removeUrl,
   reparentNode,
@@ -87,6 +90,7 @@ describe('addChild', () => {
   it('records the side only for a child of the root', () => {
     expect(addChild(sample(), 'root', 'left')!.node.side).toBe('left');
     expect(addChild(sample(), 'root', 'left')!.side).toBe('left');
+    expect(addChild(sample(), 'root')!.node.side).toBe('right');
     expect(addChild(sample(), 'a', 'left')!.node.side).toBeUndefined();
     expect(addChild(sample(), 'a')!.side).toBeNull();
   });
@@ -169,9 +173,54 @@ describe('reparentNode', () => {
     expect(findNode(moved, 'a')!.node.customX).toBeUndefined();
   });
 
+  it('sets side when moving onto the root, and clears it when nesting', () => {
+    const nested = reparentNode(sample(), 'a1', 'root', 'left')!;
+    expect(findNode(nested, 'a1')!.node.side).toBe('left');
+    const deeper = reparentNode(nested, 'a1', 'b')!;
+    expect(findNode(deeper, 'a1')!.node.side).toBeUndefined();
+  });
+
   it('returns null rather than removing the node when the target is missing', () => {
     const result = reparentNode(sample(), 'a', 'nope');
     expect(result).toBeNull();
+  });
+});
+
+describe('root layout mode', () => {
+  it('balances root children left and right by subtree weight', () => {
+    const root = node('root', [
+      node('a', [node('a1'), node('a2')]),
+      node('b'),
+      node('c'),
+    ]);
+    const mapped = applyRootLayoutMode(root, 'map');
+    const sides = mapped.children.map((c) => c.side);
+    // a (weight 3) → right; then b and c fill the lighter left side.
+    expect(sides).toEqual(['right', 'left', 'left']);
+  });
+
+  it('puts every root child on the right in tree mode', () => {
+    const root = node('root', [
+      { ...node('l'), side: 'left' } as MindMapTreeNode,
+      { ...node('r'), side: 'right' } as MindMapTreeNode,
+    ]);
+    const tree = applyRootLayoutMode(root, 'tree');
+    expect(tree.children.every((c) => c.side === 'right')).toBe(true);
+  });
+
+  it('picks the lighter side for the next root child', () => {
+    const root = node('root', [
+      { ...node('a', [node('a1')]), side: 'right' } as MindMapTreeNode,
+      { ...node('b'), side: 'left' } as MindMapTreeNode,
+    ]);
+    expect(pickBalancedSide(root)).toBe('left');
+  });
+
+  it('infers map mode from left-side children when nothing was saved', () => {
+    const root = node('root', [{ ...node('l'), side: 'left' } as MindMapTreeNode]);
+    expect(inferRootLayoutMode(root)).toBe('map');
+    expect(inferRootLayoutMode(sample(), 'tree')).toBe('tree');
+    expect(inferRootLayoutMode(sample(), 'map')).toBe('map');
   });
 });
 
