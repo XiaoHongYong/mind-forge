@@ -18,21 +18,23 @@ MindForge 是一款本地优先的思维导图编辑器。文档即磁盘上的�
 
 ```text
 HomePage (/)
-  新建  → 未命名 DocumentSession → /editor
-  打开  → 对话框 → 按扩展名解析 → DocumentSession → /editor
+  新建  → 未命名 DocumentSession（新 tab）→ /editor
+  打开  → 对话框 → 按扩展名解析 → DocumentSession（新 tab；同路径则激活已有）→ /editor
   最近  → openPath → /editor
 
 EditorPage (/editor)
-  内存中的 DocumentSession（zustand）
-  保存     → 将字节写入 session.path（未命名则走另存为）
+  内存中的多文档 tabs（zustand：sessions[] + activeId）
+  标签栏   → VS Code 风格：切换 / 关闭 / 新建；脏点表示未保存
+  保存     → 将字节写入 active session.path（未命名则走另存为）
   另存为   → 对话框 → 写入 → 更新 path + 最近文件
   导出     → 序列化器 + 目标对话框（互换格式）
 ```
 
-`DocumentSession` 是唯一的活动文档：
+每个 `DocumentSession` 是一个打开中的缓冲（一个 tab）：
 
 ```ts
 {
+  id: string;            // tab 生命周期内稳定；不落盘
   path: string | null;   // null = 未命名 / 从未保存
   title: string;
   tree: MindMapTree;
@@ -40,6 +42,10 @@ EditorPage (/editor)
   dirty: boolean;
 }
 ```
+
+同一绝对路径只对应一个 tab：再次打开会激活已有缓冲，而不是复制一份。
+
+退出应用后再打开时，会恢复上次的标签：已保存文件按路径重新打开（磁盘未变时带回未保存修改），从未保存的新建文档按快照中的树恢复。快照写在应用数据目录（`__mindforge_workspace__`），浏览器模式则写入 `localStorage`。回到首页不会丢掉这组标签；只有关掉全部标签后，下次启动才回到首页。
 
 路由从不嵌入绝对路径（长度 / 编码 / 隐私）。路径由会话 store 持有。
 

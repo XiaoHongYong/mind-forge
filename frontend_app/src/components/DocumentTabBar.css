@@ -1,0 +1,116 @@
+/* VS Code–style document tab bar sitting above the editor toolbar. */
+
+.mm-doc-tabs {
+  display: flex;
+  align-items: stretch;
+  flex-shrink: 0;
+  height: 35px;
+  background: color-mix(in srgb, var(--mm-toolbar-bg) 70%, #000 30%);
+  border-bottom: 1px solid var(--mm-toolbar-border);
+  z-index: 11;
+}
+
+:root.light .mm-doc-tabs {
+  background: color-mix(in srgb, var(--mm-toolbar-bg) 88%, #94a3b8 12%);
+}
+
+.mm-doc-tabs-scroll {
+  display: flex;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+.mm-doc-tabs-scroll::-webkit-scrollbar {
+  height: 4px;
+}
+
+.mm-doc-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 180px;
+  min-width: 72px;
+  height: 100%;
+  padding: 0 8px 0 12px;
+  border: none;
+  border-right: 1px solid var(--mm-toolbar-border);
+  background: transparent;
+  color: var(--mm-btn-text);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.mm-doc-tab:hover {
+  background: color-mix(in srgb, var(--mm-btn-hover) 80%, transparent);
+  color: var(--mm-btn-text-hover);
+}
+
+.mm-doc-tab.is-active {
+  background: var(--mm-toolbar-bg);
+  color: var(--mm-btn-text-hover);
+  box-shadow: inset 0 -1px 0 var(--accent);
+}
+
+.mm-doc-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1 1 auto;
+  text-align: left;
+}
+
+.mm-doc-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  opacity: 0;
+  color: inherit;
+}
+
+.mm-doc-tab:hover .mm-doc-tab-close,
+.mm-doc-tab.is-active .mm-doc-tab-close,
+.mm-doc-tab.is-dirty .mm-doc-tab-close {
+  opacity: 1;
+}
+
+.mm-doc-tab-close:hover {
+  background: var(--mm-btn-hover);
+}
+
+.mm-doc-tab-dirty {
+  display: block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.85;
+}
+
+.mm-doc-tab-new {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--mm-btn-text);
+  cursor: pointer;
+}
+
+.mm-doc-tab-new:hover {
+  color: var(--mm-btn-text-hover);
+  background: color-mix(in srgb, var(--mm-btn-hover) 80%, transparent);
+}

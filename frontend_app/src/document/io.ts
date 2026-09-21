@@ -9,6 +9,7 @@ import {
   createEmptyTree,
   exportFormatIdForPath,
   formatIdFromPath,
+  newSessionId,
   titleFromPath,
   type DocumentSession,
 } from './types';
@@ -48,6 +49,7 @@ export async function openDocumentFromPath(path: string): Promise<DocumentSessio
   const title = titleFromPath(path);
   const root = await parseBytes(bytes, formatId, title, fileNameFromPath(path));
   const session: DocumentSession = {
+    id: newSessionId(),
     path,
     title,
     tree: { version: 'tree', root },
@@ -82,6 +84,7 @@ export async function openDocumentViaDialog(): Promise<DocumentSession | null> {
   const title = vaultTitleFromFileName(file.name, format.extensions);
   const root = await format.parse(file, title);
   return {
+    id: newSessionId(),
     path: null,
     title,
     tree: { version: 'tree', root },
@@ -92,6 +95,7 @@ export async function openDocumentViaDialog(): Promise<DocumentSession | null> {
 
 export function newDocument(title = 'Untitled'): DocumentSession {
   return {
+    id: newSessionId(),
     path: null,
     title,
     tree: createEmptyTree(title),
@@ -169,6 +173,7 @@ export async function saveDocumentAs(
     }
     await deleteUnsavedBackup(path);
     return {
+      ...session,
       path,
       title: titleFromPath(path) || title,
       tree,

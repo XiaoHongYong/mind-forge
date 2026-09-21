@@ -4,12 +4,18 @@ import type { ImportFormatId } from '../utils/importFormats';
 
 /** Live editing session — path is null until the first successful Save As. */
 export interface DocumentSession {
+  /** Stable tab id for the lifetime of this open buffer (not persisted). */
+  id: string;
   path: string | null;
   title: string;
   tree: MindMapTree;
   /** Format used when serializing Save / inferred from path on Open. */
   formatId: ExportFormatId | ImportFormatId;
   dirty: boolean;
+}
+
+export function newSessionId(): string {
+  return crypto.randomUUID();
 }
 
 export interface RecentFileEntry {

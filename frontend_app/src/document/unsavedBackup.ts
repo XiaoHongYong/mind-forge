@@ -1,7 +1,7 @@
 import type { MindMapTree } from '../types';
 import { isTauri } from '../storage';
 import { readFileBytes } from './fileAccess';
-import type { DocumentSession } from './types';
+import { newSessionId, type DocumentSession } from './types';
 
 /**
  * Stable key for the single untitled (never-saved) backup slot.
@@ -105,6 +105,21 @@ async function invokeDelete(key: string): Promise<void> {
   await invoke('delete_unsaved_backup', { path: key });
 }
 
+/** App-data JSON slot (same store as unsaved backups). No-op outside Tauri. */
+export async function writeAppDataSlot(key: string, payloadJson: string): Promise<void> {
+  if (!isTauri()) return;
+  await invokeWrite(key, payloadJson);
+}
+
+export async function readAppDataSlot(key: string): Promise<string | null> {
+  if (!isTauri()) return null;
+  try {
+    return await invokeRead(key);
+  } catch {
+    return null;
+  }
+}
+
 /** Persist the live (unsaved) session. `path: null` = never saved / no file. */
 export async function writeUnsavedBackup(input: {
   path: string | null;
@@ -201,6 +216,7 @@ export async function takeUntitledUnsavedBackup(): Promise<UnsavedBackupPayload 
 /** Build a dirty untitled session from a never-saved backup. */
 export function sessionFromUntitledBackup(backup: UnsavedBackupPayload): DocumentSession {
   return {
+    id: newSessionId(),
     path: null,
     title: backup.title || 'Untitled',
     tree: backup.tree,
