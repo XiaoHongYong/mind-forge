@@ -1174,6 +1174,26 @@
   filter: drop-shadow(0 0 8px #22c55e88) !important;
 }
 
+.mm-reparent-target rect,
+.mm-reparent-target ellipse {
+  stroke: var(--accent) !important;
+  stroke-width: 3 !important;
+}
+
+.mm-drop-guide {
+  pointer-events: none;
+}
+
+.mm-drop-guide line {
+  stroke: var(--accent, #7c3aed);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.mm-drop-guide circle {
+  fill: var(--accent, #7c3aed);
+}
+
 /* ── Canvas ──────────────────────────────────────────────────────────────── */
 /* ── Canvas area + docked trays (see docs/ui-rework-plan.md §2.2) ─────────── */
 .mm-canvas-area {

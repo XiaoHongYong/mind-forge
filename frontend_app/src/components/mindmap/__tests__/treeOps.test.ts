@@ -174,6 +174,25 @@ describe('reparentNode', () => {
     expect(findNode(moved, 'a')!.node.customX).toBeUndefined();
   });
 
+  it('inserts at an index and realigns both branches', () => {
+    const root = sample();
+    findNode(root, 'a2')!.node.customX = 10;
+    findNode(root, 'a2')!.node.customY = 10;
+    findNode(root, 'b')!.node.customX = 20;
+    findNode(root, 'b')!.node.customY = 20;
+    const moved = reparentNode(root, 'a1', 'b', undefined, 0)!;
+    expect(findNode(moved, 'b')!.node.children.map((c) => c.id)).toEqual(['a1']);
+    expect(findNode(moved, 'a')!.node.children.map((c) => c.id)).toEqual(['a2']);
+    expect(findNode(moved, 'a1')!.node.customX).toBeUndefined();
+    expect(findNode(moved, 'a2')!.node.customX).toBeUndefined();
+    expect(findNode(moved, 'b')!.node.customX).toBeUndefined();
+  });
+
+  it('keeps sibling order when the index counted the node that was removed', () => {
+    const moved = reparentNode(sample(), 'a2', 'a', undefined, 0)!;
+    expect(findNode(moved, 'a')!.node.children.map((c) => c.id)).toEqual(['a2', 'a1']);
+  });
+
   it('sets side when moving onto the root, and clears it when nesting', () => {
     const nested = reparentNode(sample(), 'a1', 'root', 'left')!;
     expect(findNode(nested, 'a1')!.node.side).toBe('left');

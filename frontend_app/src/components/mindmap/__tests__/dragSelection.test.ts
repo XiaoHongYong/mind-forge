@@ -2,13 +2,18 @@ import { describe, expect, it } from 'vitest';
 import type { MindMapTreeNode } from '../../../types';
 import {
   DRAG_THRESHOLD,
-  DROP_RADIUS,
+  DROP_PAD_Y,
+  SIBLING_BAND,
+  collectDropNodes,
   dragDelta,
   entryCentre,
-  findDropTarget,
   marqueeBounds,
   nodesInMarquee,
   passedDragThreshold,
+  resolveDropIntent,
+  subtreeIds,
+  type DropNode,
+  type DropTree,
   type Layout,
 } from '../dragSelection';
 
@@ -42,27 +47,92 @@ describe('passedDragThreshold', () => {
   });
 });
 
-describe('findDropTarget', () => {
-  it('finds a node the dragged one has come close to', () => {
-    const l = layout({ a: entry(0, 0), b: entry(500, 500) });
-    // The centre of `a` is (40, 18); land on it, then step outside the radius.
-    expect(findDropTarget(l, 'dragged', { x: 40, y: 18 })).toBe('a');
-    expect(findDropTarget(l, 'dragged', { x: 40, y: 18 + DROP_RADIUS })).toBeNull();
+const dropNode = (over: Partial<DropNode> & Pick<DropNode, 'id'>): DropNode => ({
+  x: 0,
+  y: 0,
+  w: 80,
+  h: 40,
+  parentId: 'root',
+  index: 0,
+  childCount: 0,
+  side: 'right',
+  ...over,
+});
+
+describe('resolveDropIntent', () => {
+  const node = dropNode({ id: 'a', x: 100, y: 100, childCount: 2 });
+  const band = node.h * SIBLING_BAND;
+
+  it('adopts the node as a child when the pointer is in the middle', () => {
+    const intent = resolveDropIntent([node], { x: 140, y: 120 }, new Set());
+    expect(intent).toEqual({ kind: 'child', parentId: 'a', index: 2, anchorId: 'a' });
   });
 
-  it('never drops a node onto itself', () => {
-    const l = layout({ a: entry(0, 0) });
-    expect(findDropTarget(l, 'a', { x: 40, y: 18 })).toBeNull();
+  it('inserts a sibling above or below from the outer bands', () => {
+    expect(resolveDropIntent([node], { x: 140, y: node.y + band - 1 }, new Set())?.kind).toBe('before');
+    expect(resolveDropIntent([node], { x: 140, y: node.y + node.h - band + 1 }, new Set())).toMatchObject({
+      kind: 'after',
+      parentId: 'root',
+      index: 1,
+      side: 'right',
+    });
   });
 
-  /**
-   * Preserved quirk, asserted so that changing it has to be deliberate: the
-   * first candidate within the radius wins, in layout order, not the nearest.
-   */
-  it('takes the first candidate in layout order, not the closest', () => {
-    const l = layout({ far: entry(0, 0), near: entry(10, 0) });
-    // (52, 18) is nearer the centre of `near` (50, 18) than of `far` (40, 18).
-    expect(findDropTarget(l, 'dragged', { x: 52, y: 18 })).toBe('far');
+  it('treats the gap just above a node as insert-before', () => {
+    const intent = resolveDropIntent([node], { x: 140, y: node.y - DROP_PAD_Y + 1 }, new Set());
+    expect(intent?.kind).toBe('before');
+    expect(intent?.index).toBe(0);
+  });
+
+  it('makes a child of the root on the side the pointer is on', () => {
+    const root = dropNode({ id: 'root', parentId: null, side: null, x: 0, y: 0, w: 120, h: 48, childCount: 3 });
+    expect(resolveDropIntent([root], { x: 20, y: 24 }, new Set())).toMatchObject({
+      kind: 'child', parentId: 'root', index: 3, side: 'left',
+    });
+    expect(resolveDropIntent([root], { x: 100, y: 24 }, new Set())?.side).toBe('right');
+  });
+
+  it('skips the dragged branch and prefers the smaller node when boxes overlap', () => {
+    const parent = dropNode({ id: 'parent', x: 0, y: 0, w: 200, h: 80, childCount: 1 });
+    const child = dropNode({ id: 'child', x: 40, y: 20, w: 40, h: 20, parentId: 'parent', childCount: 0 });
+    expect(resolveDropIntent([parent, child], { x: 50, y: 30 }, new Set(['child']))?.parentId).toBe('parent');
+    expect(resolveDropIntent([parent, child], { x: 50, y: 30 }, new Set())?.anchorId).toBe('child');
+  });
+
+  it('returns null over empty space', () => {
+    expect(resolveDropIntent([node], { x: 900, y: 900 }, new Set())).toBeNull();
+  });
+});
+
+describe('collectDropNodes', () => {
+  it('records parent, index, and which side a root child is on', () => {
+    const tree: DropTree = {
+      id: 'root',
+      children: [
+        { id: 'left', side: 'left', children: [{ id: 'leaf', children: [] }] },
+        { id: 'right', children: [] },
+      ],
+    };
+    const nodes = collectDropNodes(tree, layout({
+      root: entry(0, 0),
+      left: entry(0, 40),
+      leaf: entry(0, 80),
+      right: entry(100, 40),
+    }));
+    expect(nodes.map((n) => [n.id, n.parentId, n.index, n.side])).toEqual([
+      ['root', null, 0, null],
+      ['left', 'root', 0, 'left'],
+      ['leaf', 'left', 0, null],
+      ['right', 'root', 1, 'right'],
+    ]);
+  });
+});
+
+describe('subtreeIds', () => {
+  it('lists the node and everything under it', () => {
+    expect(subtreeIds({ id: 'a', children: [{ id: 'a1', children: [{ id: 'a2' }] }] }))
+      .toEqual(['a', 'a1', 'a2']);
+    expect(subtreeIds(null)).toEqual([]);
   });
 });
 

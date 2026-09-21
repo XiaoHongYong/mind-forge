@@ -1,5 +1,5 @@
 import { useCallback, useState, type MouseEvent } from 'react';
-import { Plus, X } from 'lucide-react';
+import { PanelLeft, PanelRight, Plus, X } from 'lucide-react';
 import type { DocumentSession } from '../document/types';
 import './DocumentTabBar.css';
 
@@ -9,6 +9,10 @@ export interface DocumentTabBarProps {
   onActivate: (id: string) => void;
   onClose: (id: string) => void;
   onNew: () => void;
+  leftSidebarOpen: boolean;
+  onToggleLeftSidebar: () => void;
+  rightSidebarOpen: boolean;
+  onToggleRightSidebar: () => void;
 }
 
 function tabLabel(session: DocumentSession): string {
@@ -24,6 +28,10 @@ export function DocumentTabBar({
   onActivate,
   onClose,
   onNew,
+  leftSidebarOpen,
+  onToggleLeftSidebar,
+  rightSidebarOpen,
+  onToggleRightSidebar,
 }: DocumentTabBarProps) {
   const [hoverCloseId, setHoverCloseId] = useState<string | null>(null);
 
@@ -84,6 +92,26 @@ export function DocumentTabBar({
         aria-label="New file"
       >
         <Plus size={14} strokeWidth={2} />
+      </button>
+      <button
+        type="button"
+        className={`mm-doc-tab-toggle${leftSidebarOpen ? ' is-active' : ''}`}
+        onClick={onToggleLeftSidebar}
+        title={leftSidebarOpen ? 'Hide left sidebar' : 'Show left sidebar'}
+        aria-label={leftSidebarOpen ? 'Hide left sidebar' : 'Show left sidebar'}
+        aria-pressed={leftSidebarOpen}
+      >
+        <PanelLeft size={14} strokeWidth={2} />
+      </button>
+      <button
+        type="button"
+        className={`mm-doc-tab-toggle${rightSidebarOpen ? ' is-active' : ''}`}
+        onClick={onToggleRightSidebar}
+        title={rightSidebarOpen ? 'Hide right sidebar' : 'Show right sidebar'}
+        aria-label={rightSidebarOpen ? 'Hide right sidebar' : 'Show right sidebar'}
+        aria-pressed={rightSidebarOpen}
+      >
+        <PanelRight size={14} strokeWidth={2} />
       </button>
     </div>
   );

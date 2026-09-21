@@ -144,17 +144,22 @@ export const moveSibling = (
 };
 
 /**
- * Move a node under a new parent.
+ * Move a node under a new parent, optionally at a child index (omit to append).
  *
  * Refuses to drop a node into its own subtree: that would splice the node out
  * of the tree and then push it into a branch that is no longer reachable from
  * the root, silently deleting it and everything under it.
+ *
+ * The moved subtree and both parents it touched have their free-drag offsets
+ * cleared, so the layout places them again instead of leaving a hole.
  */
 export const reparentNode = (
   root: MindMapTreeNode,
   nodeId: string,
   newParentId: string,
   side?: 'left' | 'right',
+  /** Index among the new parent's children. Omit to append. */
+  index?: number,
 ): MindMapTreeNode | null => {
   if (nodeId === 'root' || nodeId === newParentId) return null;
   if (isDescendant(root, nodeId, newParentId)) return null;
@@ -165,15 +170,27 @@ export const reparentNode = (
   const target = findNode(next, newParentId);
   if (!target) return null;
 
-  const [removed] = found.parent.children.splice(found.index, 1);
-  // It is being laid out by the tree again, not by wherever it was dragged.
-  removed.customX = undefined;
-  removed.customY = undefined;
+  const oldParent = found.parent;
+  const [removed] = oldParent.children.splice(found.index, 1);
+  // The branch is going back under automatic layout, including anything that
+  // was free-dragged beneath the moved node.
+  clearBranchCustomPositions(removed);
   // `side` only applies to root children; drop a stale value when nesting deeper.
   if (newParentId === 'root') removed.side = side ?? 'right';
   else delete removed.side;
-  target.node.children.push(removed);
+
+  let insertAt = index ?? target.node.children.length;
+  // The node was removed first. An index that counted it has to step back.
+  if (oldParent.id === target.node.id && found.index < insertAt) insertAt -= 1;
+  insertAt = Math.max(0, Math.min(insertAt, target.node.children.length));
+  target.node.children.splice(insertAt, 0, removed);
   target.node.collapsed = false;
+
+  // Both branches the move disturbed: the gap that closed, and the slot that
+  // opened. A parent that is the root realigns the whole map, because every
+  // topic hangs off it.
+  clearBranchCustomPositions(oldParent);
+  if (oldParent.id !== target.node.id) clearBranchCustomPositions(target.node);
   return next;
 };
 

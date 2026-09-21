@@ -4,7 +4,7 @@
  * Ported features from the dashboard (minus PVS entity links and sharing):
  * • Checkboxes (tri-state: null / false / true)           C key
  * • Progress pie (inline 32 px diameter)                    P key
- * • Drag-and-drop (free-drag + reparent)
+ * • Drag-and-drop (reparent into a child or sibling slot, then auto-align)
  * • Left / right child layout from root                     Shift+Tab
  * • Extended 54-swatch colour palette
  * • Date planning (start / end)                             D key
@@ -101,11 +101,15 @@ import {
 } from './mindmap/treeOps';
 import { useMindMapHistory } from './mindmap/useMindMapHistory';
 import {
+  collectDropNodes,
   dragDelta,
-  findDropTarget,
   marqueeBounds,
   nodesInMarquee,
   passedDragThreshold,
+  resolveDropIntent,
+  sameDropIntent,
+  subtreeIds,
+  type DropIntent,
 } from './mindmap/dragSelection';
 
 /** null closes the cycle: 0 → 25 → 50 → 75 → 100 → no dial → 0. */
@@ -205,11 +209,49 @@ interface DragState {
   nodeId: string;
   startClientX: number;
   startClientY: number;
-  origX: number;
-  origY: number;
-  currentX: number;
-  currentY: number;
   moved: boolean;
+  /** Latest slot under the pointer. Read on mouseup so a drop does not use a stale render. */
+  intent: DropIntent | null;
+}
+
+interface DragOffset {
+  nodeId: string;
+  dx: number;
+  dy: number;
+}
+
+/** The insertion mark drawn while a node is dragged over another. */
+function DropGuide({
+  intent,
+  layout,
+}: {
+  intent: DropIntent;
+  layout: Record<string, { x: number; y: number; w: number; h: number; direction?: 'left' | 'right' }>;
+}) {
+  if (intent.kind === 'before' || intent.kind === 'after') {
+    const box = layout[intent.anchorId];
+    if (!box) return null;
+    const y = intent.kind === 'before' ? box.y - 3 : box.y + box.h + 3;
+    const pad = 6;
+    return (
+      <g className="mm-drop-guide" pointerEvents="none">
+        <line x1={box.x - pad} y1={y} x2={box.x + box.w + pad} y2={y} />
+        <circle cx={box.x - pad} cy={y} r={3.5} />
+      </g>
+    );
+  }
+  const box = layout[intent.parentId];
+  if (!box) return null;
+  const onLeft = intent.side === 'left' || (intent.side !== 'right' && box.direction === 'left');
+  const y = box.y + box.h / 2;
+  const x1 = onLeft ? box.x : box.x + box.w;
+  const x2 = onLeft ? box.x - 22 : box.x + box.w + 22;
+  return (
+    <g className="mm-drop-guide" pointerEvents="none">
+      <line x1={x1} y1={y} x2={x2} y2={y} />
+      <circle cx={x2} cy={y} r={4} />
+    </g>
+  );
 }
 
 // A captioned cluster of toolbar buttons — Standard density merges some of
@@ -418,11 +460,14 @@ export function DesktopMindMapEditor({
   }, [contextMenu]);
 
   // ── Drag-and-drop ──────────────────────────────────────────────────────────
-  const [isDragging, setIsDragging] = useState(false);
+  const [dragOffset, setDragOffset] = useState<DragOffset | null>(null);
+  const [structDrop, setStructDrop] = useState<DropIntent | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const [fileDropBusyNodeId, setFileDropBusyNodeId] = useState<string | null>(null);
   const [nodeImageBusy, setNodeImageBusy] = useState(false);
   const dragRef = useRef<DragState | null>(null);
+  /** Swallow the click that follows a drag, so it does not select whatever ended up under the pointer. */
+  const dragMovedRef = useRef(false);
   const hoverPopupCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hoverPopupRef = useRef<HTMLDivElement>(null);
   const [attachmentPreviewUrls, setAttachmentPreviewUrls] = useState<Record<string, string>>({});
@@ -979,19 +1024,15 @@ export function DesktopMindMapEditor({
   }, [root, mutate]);
 
   // ── Reparent (drag-drop) ──────────────────────────────────────────────────
-  const reparentNode = useCallback((nodeId: string, newParentId: string) => {
-    const side = newParentId === 'root' ? 'right' : undefined;
-    const moved = reparentNodeOp(root, nodeId, newParentId, side);
+  const reparentNode = useCallback((nodeId: string, intent: DropIntent) => {
+    const moved = reparentNodeOp(root, nodeId, intent.parentId, intent.side, intent.index);
     if (!moved) return;
-    const nextRoot = layoutMode === 'map' && newParentId === 'root'
-      ? applyClockwiseMapLayout(moved)
-      : moved;
-    const placed = findNode(nextRoot, nodeId)?.node;
+    const placed = findNode(moved, nodeId)?.node;
     if (placed?.side === 'left') setRootLeftCollapsed(false);
-    if (placed && newParentId === 'root' && placed.side !== 'left') setRootRightCollapsed(false);
-    mutate(nextRoot);
+    if (placed && intent.parentId === 'root' && placed.side !== 'left') setRootRightCollapsed(false);
+    mutate(moved);
     setSelectedId(nodeId);
-  }, [root, mutate, layoutMode]);
+  }, [root, mutate]);
 
   const toggleLayoutMode = useCallback(() => {
     const nextMode: RootLayoutMode = layoutMode === 'map' ? 'tree' : 'map';
@@ -1817,26 +1858,23 @@ export function DesktopMindMapEditor({
         { x: e.clientX, y: e.clientY },
         zoom,
       );
-      if (!d.moved && passedDragThreshold({ x: dx, y: dy })) { d.moved = true; setIsDragging(true); }
-      if (d.moved) {
-        d.currentX = d.origX + dx;
-        d.currentY = d.origY + dy;
-        // Move the dragged node visually
-        const el = svgRef.current?.querySelector(`[data-node="${d.nodeId}"]`) as SVGGElement | null;
-        if (el) el.style.transform = `translate(${dx}px, ${dy}px)`;
-        // Also move other multi-selected nodes
-        if (multiSelect.size > 0) {
-          for (const id of multiSelect) {
-            if (id === d.nodeId) continue;
-            const mel = svgRef.current?.querySelector(`[data-node="${id}"]`) as SVGGElement | null;
-            if (mel) mel.style.transform = `translate(${dx}px, ${dy}px)`;
-          }
-        }
-        // Drop target detection (only when dragging a single node)
-        if (multiSelect.size <= 1) {
-          setDropTargetId(findDropTarget(layout, d.nodeId, { x: d.currentX, y: d.currentY }));
-        }
-      }
+      if (!d.moved && !passedDragThreshold({ x: dx, y: dy })) return;
+      d.moved = true;
+      const rect = svgRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const pointer = {
+        x: (e.clientX - rect.left - pan.x) / zoom,
+        y: (e.clientY - rect.top - pan.y) / zoom,
+      };
+      const forbidden = new Set(subtreeIds(findNode(root, d.nodeId)?.node));
+      const intent = resolveDropIntent(collectDropNodes(root, layout), pointer, forbidden);
+      d.intent = intent;
+      setStructDrop((prev) => (sameDropIntent(prev, intent) ? prev : intent));
+      setDragOffset((prev) => (
+        prev && prev.nodeId === d.nodeId && prev.dx === dx && prev.dy === dy
+          ? prev
+          : { nodeId: d.nodeId, dx, dy }
+      ));
       return;
     }
     if (!isPanning.current) return;
@@ -1844,7 +1882,7 @@ export function DesktopMindMapEditor({
     const dy = e.clientY - lastPan.current.y;
     lastPan.current = { x: e.clientX, y: e.clientY };
     setPan((p) => ({ x: p.x + dx, y: p.y + dy }));
-  }, [zoom, layout, rectSel, pan, multiSelect]);
+  }, [zoom, layout, rectSel, pan, root]);
 
   const onTouchStartSvg = useCallback((e: React.TouchEvent<SVGSVGElement>) => {
     if (e.touches.length !== 1) return;
@@ -2114,40 +2152,15 @@ export function DesktopMindMapEditor({
     }
     isPanning.current = false;
     if (svgRef.current) svgRef.current.style.cursor = '';
-    if (dragRef.current && dragRef.current.moved) {
-      const d = dragRef.current;
-      const dx = (d.currentX - d.origX);
-      const dy = (d.currentY - d.origY);
-      // Clear visual transforms on all dragged elements
-      const el = svgRef.current?.querySelector(`[data-node="${d.nodeId}"]`) as SVGGElement | null;
-      if (el) el.style.transform = '';
-      for (const id of multiSelect) {
-        if (id === d.nodeId) continue;
-        const mel = svgRef.current?.querySelector(`[data-node="${id}"]`) as SVGGElement | null;
-        if (mel) mel.style.transform = '';
-      }
-      if (dropTargetId && dropTargetId !== d.nodeId && multiSelect.size <= 1) {
-        reparentNode(d.nodeId, dropTargetId);
-      } else {
-        // Save new positions for all multi-selected nodes (or just the one)
-        const newRoot = cloneTree(root);
-        const idsToMove = multiSelect.size > 0 ? multiSelect : new Set([d.nodeId]);
-        for (const id of idsToMove) {
-          const found = findNode(newRoot, id);
-          if (!found) continue;
-          const box = layout[id];
-          if (box) {
-            found.node.customX = box.x + dx;
-            found.node.customY = box.y + dy;
-          }
-        }
-        mutate(newRoot);
-      }
+    if (dragRef.current?.moved) {
+      dragMovedRef.current = true;
+      window.setTimeout(() => { dragMovedRef.current = false; }, 0);
+      if (dragRef.current.intent) reparentNode(dragRef.current.nodeId, dragRef.current.intent);
     }
     dragRef.current = null;
-    setIsDragging(false);
-    setDropTargetId(null);
-  }, [rectSel, layout, dropTargetId, reparentNode, root, mutate, multiSelect]);
+    setDragOffset(null);
+    setStructDrop(null);
+  }, [rectSel, layout, reparentNode]);
 
   // ── Fit view ──────────────────────────────────────────────────────────────
   const fitView = useCallback(() => {
@@ -2340,6 +2353,12 @@ export function DesktopMindMapEditor({
     return buildThemeColorMap(root, colors);
   }, [root, mapStyle.colorThemeId]);
 
+  const dragNodeId = dragOffset?.nodeId ?? null;
+  const dragBranchIds = useMemo(() => {
+    if (!dragNodeId) return new Set<string>();
+    return new Set(subtreeIds(findNode(root, dragNodeId)?.node));
+  }, [dragNodeId, root]);
+
   const renderConnections = useCallback((node: MindMapTreeNode): JSX.Element[] => {
     const paths: JSX.Element[] = [];
     if (node.collapsed) return paths;
@@ -2369,6 +2388,8 @@ export function DesktopMindMapEditor({
         ?? null;
       const branchWidth = typeof ch.edgeWidth === 'number' && ch.edgeWidth > 0 ? ch.edgeWidth : 2;
       const faded = focusMode && focusedIds.size > 0 && !focusedIds.has(node.id) && !focusedIds.has(ch.id);
+      const draggingChild = dragBranchIds.has(ch.id);
+      const draggingParent = dragBranchIds.has(node.id);
       const stroke = branchColor ?? 'var(--mm-connection, #7C3AED)';
       paths.push(
         <path
@@ -2377,16 +2398,21 @@ export function DesktopMindMapEditor({
           className={`mm-connection${faded ? ' mm-faded' : ''}`}
           fill="none"
           stroke={stroke}
-          style={{ stroke }}
+          style={{
+            stroke,
+            transform: dragOffset && draggingChild && draggingParent
+              ? `translate(${dragOffset.dx}px, ${dragOffset.dy}px)`
+              : undefined,
+          }}
           strokeWidth={branchWidth}
           strokeLinecap="round"
-          opacity={faded ? 0.2 : 1}
+          opacity={faded ? 0.2 : dragOffset && draggingChild && !draggingParent ? 0.28 : 1}
         />,
       );
       paths.push(...renderConnections(ch));
     }
     return paths;
-  }, [layout, focusMode, focusedIds, rootLeftCollapsed, rootRightCollapsed, mapStyle.defaultEdgeColor, themeColorById]);
+  }, [layout, focusMode, focusedIds, rootLeftCollapsed, rootRightCollapsed, mapStyle.defaultEdgeColor, themeColorById, dragBranchIds, dragOffset]);
 
   /** Opens the full-resolution original behind a node's glyph. */
   const openNodeImage = useCallback(async (node: MindMapTreeNode) => {
@@ -2455,6 +2481,8 @@ export function DesktopMindMapEditor({
     const isSelected = node.id === selectedId;
     const isEditing = node.id === editingId;
     const isDrop = node.id === dropTargetId;
+    const isReparent = structDrop?.kind === 'child' && structDrop.parentId === node.id;
+    const draggingThis = dragBranchIds.has(node.id);
     const themeColor = isRoot ? null : (themeColorById?.get(node.id) ?? null);
     const ownColor = resolveNodeThemeColor(node.color, themeColor);
     const rx = (isRoot ? 18 : 8) * scale;
@@ -2465,9 +2493,11 @@ export function DesktopMindMapEditor({
     // border in the same colour as its fill and selecting it showed nothing.
     const strokeColor = isDrop
       ? '#22c55e'
-      : isSelected
+      : isReparent
         ? 'var(--accent)'
-        : (node.borderColor ?? ownColor ?? (isRoot ? 'var(--mm-root-stroke)' : 'var(--mm-node-stroke)'));
+        : isSelected
+          ? 'var(--accent)'
+          : (node.borderColor ?? ownColor ?? (isRoot ? 'var(--mm-root-stroke)' : 'var(--mm-node-stroke)'));
     const textColor = node.textColor
       ?? (ownColor ? '#ffffff' : (isRoot ? 'var(--mm-root-text)' : 'var(--mm-node-text)'));
 
@@ -2499,10 +2529,18 @@ export function DesktopMindMapEditor({
 
     const elems: JSX.Element[] = [
       <g key={node.id} data-node={node.id}
-        className={`mm-node-group${isSelected ? ' mm-selected' : ''}${isMulti ? ' mm-multi-selected' : ''}${isDrop ? ' mm-drop-target' : ''}${focusMode && focusedIds.size > 0 && !focusedIds.has(node.id) ? ' mm-faded' : ''}`}
-        style={{ cursor: isDragging ? 'grabbing' : 'pointer' }}
+        className={`mm-node-group${isSelected ? ' mm-selected' : ''}${isMulti ? ' mm-multi-selected' : ''}${isDrop ? ' mm-drop-target' : ''}${isReparent ? ' mm-reparent-target' : ''}${focusMode && focusedIds.size > 0 && !focusedIds.has(node.id) ? ' mm-faded' : ''}`}
+        style={{
+          cursor: dragOffset ? 'grabbing' : 'pointer',
+          transform: draggingThis && dragOffset ? `translate(${dragOffset.dx}px, ${dragOffset.dy}px)` : undefined,
+          opacity: draggingThis ? 0.72 : undefined,
+        }}
         onClick={(e) => {
           e.stopPropagation();
+          if (dragMovedRef.current) {
+            dragMovedRef.current = false;
+            return;
+          }
           if (e.ctrlKey || e.metaKey) {
             setMultiSelect((prev) => { const s = new Set(prev); if (s.has(node.id)) s.delete(node.id); else s.add(node.id); return s; });
           } else {
@@ -2522,9 +2560,15 @@ export function DesktopMindMapEditor({
         }}
         onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setSelectedId(node.id); setContextMenu({ x: e.clientX, y: e.clientY, nodeId: node.id }); }}
         onMouseDown={(e) => {
-          if (e.button !== 0 || isEditing) return;
+          if (e.button !== 0 || isEditing || node.id === 'root') return;
           e.stopPropagation();
-          dragRef.current = { nodeId: node.id, startClientX: e.clientX, startClientY: e.clientY, origX: box.x, origY: box.y, currentX: box.x, currentY: box.y, moved: false };
+          dragRef.current = {
+            nodeId: node.id,
+            startClientX: e.clientX,
+            startClientY: e.clientY,
+            moved: false,
+            intent: null,
+          };
         }}
       >
         {parts.hasDate && <DateBadge box={box} node={node} />}
@@ -2538,7 +2582,7 @@ export function DesktopMindMapEditor({
           rx={rx}
           fill={fillColor}
           stroke={strokeColor}
-          strokeWidth={isSelected ? 2.5 : isDrop ? 3 : 1.5}
+          strokeWidth={isSelected ? 2.5 : isDrop || isReparent ? 3 : 1.5}
           className={isSelected ? 'mm-node-selected' : ''}
         />
 
@@ -2596,7 +2640,7 @@ export function DesktopMindMapEditor({
       }
     }
     return elems;
-    }, [layout, selectedId, multiSelect, editingId, editText, dropTargetId, isDragging, searchResults,
+    }, [layout, selectedId, multiSelect, editingId, editText, dropTargetId, structDrop, dragOffset, dragBranchIds, searchResults,
       attachmentPreviewUrls, cancelHoverPopupClose, scheduleHoverPopupClose, commitEdit, cancelEdit, getNodeAttachments, onOpenNodeAttachment, toggleCollapse, toggleCheckbox,
       focusMode, focusedIds, rootLeftCollapsed, rootRightCollapsed, onOpenFileLink, mapStyle.defaultFontSize, mapStyle.defaultFontFamily, formatSidebarOpen, themeColorById]);  // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -2916,7 +2960,7 @@ export function DesktopMindMapEditor({
                 <>
                   {toolbarGroup('Insert', <>{notesBtn}{datesBtn}{tagsBtn}{linkBtn}{urlBtn}{imageBtn}{attachBtn}</>)}
                   {zoomGroup}
-                  {toolbarGroup('Navigate', <>{alignBtn}{focusBtn}{formatSidebarBtn}{searchBtn}{shortcutsBtn}</>)}
+                  {toolbarGroup('Navigate', <>{focusBtn}{formatSidebarBtn}{searchBtn}{shortcutsBtn}</>)}
                 </>
               );
             }
@@ -3103,6 +3147,7 @@ export function DesktopMindMapEditor({
           <g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`} style={mapStyle.defaultFontFamily ? { fontFamily: mapStyle.defaultFontFamily } : undefined}>
             <g className="mm-connections">{renderConnections(root)}</g>
             <g className="mm-nodes">{renderNodes(root)}</g>
+            {structDrop && <DropGuide intent={structDrop} layout={layout} />}
             {rectSel && (() => {
               const { x, y, w, h } = marqueeBounds(rectSel);
               return <rect x={x} y={y} width={w} height={h} fill="var(--accent)" fillOpacity={0.08} stroke="var(--accent)" strokeWidth={1 / zoom} strokeDasharray={`${4 / zoom}`} />;

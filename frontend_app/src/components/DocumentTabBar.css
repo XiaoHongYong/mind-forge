@@ -114,3 +114,25 @@
   color: var(--mm-btn-text-hover);
   background: color-mix(in srgb, var(--mm-btn-hover) 80%, transparent);
 }
+
+.mm-doc-tab-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--mm-btn-text);
+  cursor: pointer;
+}
+
+.mm-doc-tab-toggle:hover {
+  color: var(--mm-btn-text-hover);
+  background: color-mix(in srgb, var(--mm-btn-hover) 80%, transparent);
+}
+
+.mm-doc-tab-toggle.is-active {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}

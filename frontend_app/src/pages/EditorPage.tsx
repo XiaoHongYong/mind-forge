@@ -13,6 +13,7 @@ import { createFilePreview } from '../utils/filePreview';
 import { downloadBlob } from '../utils/download';
 import { buildExportFileBaseName as buildExportName } from '../utils/exportFileName';
 import { EXPORT_FORMATS, type ExportFormat } from '../utils/exportFormats';
+import { useUiStore } from '../store/ui';
 
 export function EditorPage() {
   const session = useDocumentStore((s) => s.session);
@@ -32,6 +33,8 @@ export function EditorPage() {
   const removeRecent = useDocumentStore((s) => s.removeRecent);
   const [sidebarTab, setSidebarTab] = useState<DocumentSidebarTab>('recent');
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const formatSidebarOpen = useUiStore((s) => s.formatSidebarOpen);
+  const setFormatSidebarOpen = useUiStore((s) => s.setFormatSidebarOpen);
   const [selectedNodeId, setSelectedNodeId] = useState<string>('root');
   const [focusNodeRequest, setFocusNodeRequest] = useState<{ nodeId: string; token: number } | null>(null);
   const [recentError, setRecentError] = useState('');
@@ -455,6 +458,10 @@ export function EditorPage() {
         onActivate={(id) => { void handleActivateTab(id); }}
         onClose={(id) => { void handleCloseTab(id); }}
         onNew={() => { void handleNew(); }}
+        leftSidebarOpen={sidebarOpen}
+        onToggleLeftSidebar={() => setSidebarOpen((open) => !open)}
+        rightSidebarOpen={formatSidebarOpen}
+        onToggleRightSidebar={() => setFormatSidebarOpen(!formatSidebarOpen)}
       />
       <div style={{ flex: 1, minHeight: 0, minWidth: 0, display: 'flex' }}>
         <DesktopMindMapEditor
