@@ -200,7 +200,7 @@ function toolbarGroup(label: string, children: ReactNode, ribbonTab?: string) {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 export function DesktopMindMapEditor({
-  initialTree, initialShowShortcuts, disableAutoPanToSelection, externalNodeAttachments, title, onSave, saving, saveMsg, error, onBack,
+  initialTree, initialDirty = false, initialShowShortcuts, disableAutoPanToSelection, externalNodeAttachments, title, onSave, saving, saveMsg, error, onBack,
   exportFormats, onExport,
   versionLabel, versionTooltip,
   onTreeChange, onSelectionChange, onNodeFileDrop, onOpenNodeAttachment,
@@ -209,8 +209,8 @@ export function DesktopMindMapEditor({
   onLoadNodeAttachmentPreview,
   documentPath, linkableFiles, linkableFilesLoading, onRequestLinkableFiles, onOpenFileLink,
   onNewDocument, onOpenDocument, onSaveAsDocument,
+  onDirtyChange,
 }: MindMapEditorProps) {
-  const autosaveMode = useThemeStore((s) => s.autosaveMode);
   const themeMode = useThemeStore((s) => s.mode);
   const toggleThemeMode = useThemeStore((s) => s.toggleMode);
   const keyboardLayout = useEffectiveKeyboardLayout();
@@ -583,9 +583,11 @@ export function DesktopMindMapEditor({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordingChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [isDirty, setIsDirty] = useState(false);
-  const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const autosaveInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [isDirty, setIsDirty] = useState(Boolean(initialDirty));
+
+  useEffect(() => {
+    onDirtyChange?.(isDirty);
+  }, [isDirty, onDirtyChange]);
 
   // ── Sync initialTree ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -614,7 +616,9 @@ export function DesktopMindMapEditor({
     setLayoutMode(inferRootLayoutMode(r, savedView?.layout_mode));
     setMapStyleState(initialTree.map_style ?? {});
     skipNextAutoPan.current = true;
-    setIsDirty(false);
+    setIsDirty(Boolean(initialDirty));
+    // initialDirty is paired with initialTree at remount time (editorKey).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialTree]);
 
   useEffect(() => {
@@ -1391,9 +1395,8 @@ export function DesktopMindMapEditor({
   /**
    * The tree as it stands, view state and all.
    *
-   * This literal was written out seven times — save, autosave, and once per
-   * export format — and every one of them had to agree about what the view
-   * state contains.
+   * This literal was written out for save and once per export format — every
+   * call site has to agree about what the view state contains.
    */
   const currentTreeSnapshot = useCallback((): MindMapTree => ({
     version: 'tree',
@@ -1676,21 +1679,6 @@ export function DesktopMindMapEditor({
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [navigateKeys, handleSave, notesOpen, saveNotes, showToast, keyboardLayout]);
-
-  // ── Autosave ──────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (autosaveTimer.current) { clearTimeout(autosaveTimer.current); autosaveTimer.current = null; }
-    if (autosaveInterval.current) { clearInterval(autosaveInterval.current); autosaveInterval.current = null; }
-    if (!isDirty || saving || autosaveMode === 'never') return;
-
-    if (autosaveMode === 'change') {
-      autosaveTimer.current = setTimeout(() => handleSave(), 1000);
-      return () => { if (autosaveTimer.current) clearTimeout(autosaveTimer.current); };
-    }
-    const intervalMs = autosaveMode === '30s' ? 30_000 : 5 * 60_000;
-    autosaveInterval.current = setInterval(() => { if (isDirty) handleSave(); }, intervalMs);
-    return () => { if (autosaveInterval.current) clearInterval(autosaveInterval.current); };
-  }, [root, title, autosaveMode, saving, handleSave, isDirty]);
 
   // ══════════════════════════════════════════════════════════════════════════
   //  ZOOM / PAN / DRAG-AND-DROP

@@ -2,9 +2,10 @@
 import { useNavigate } from 'react-router-dom';
 import { DesktopMindMapEditor } from '../components/MindMapEditor';
 import type { LinkableFile } from '../components/MindMapFileLinkDialog';
-import { useDocumentStore } from '../document';
-import { newDocument } from '../document/io';
+import { useDocumentStore, writeUnsavedBackup, restoreOrCreateNew } from '../document';
+import type { DocumentSession } from '../document/types';
 import { documentWindowCaption, setWindowCaption } from '../platform/windowCaption';
+import { isTauri } from '../storage';
 import type { MindMapTree, NodeAttachmentRef } from '../types';
 import { fromBase64, toBase64 } from '../utils/base64';
 import { createFilePreview } from '../utils/filePreview';
@@ -17,6 +18,7 @@ export function EditorPage() {
   const session = useDocumentStore((s) => s.session);
   const recent = useDocumentStore((s) => s.recent);
   const setSession = useDocumentStore((s) => s.setSession);
+  const markDirty = useDocumentStore((s) => s.markDirty);
   const save = useDocumentStore((s) => s.save);
   const saveAs = useDocumentStore((s) => s.saveAs);
   const openViaDialog = useDocumentStore((s) => s.openViaDialog);
@@ -25,11 +27,24 @@ export function EditorPage() {
   const [editorKey, setEditorKey] = useState(0);
   const [title, setTitle] = useState(session?.title ?? 'Untitled');
   const [initialTree, setInitialTree] = useState<MindMapTree | null>(session?.tree ?? null);
+  const [initialDirty, setInitialDirty] = useState(Boolean(session?.dirty));
   const [currentTree, setCurrentTree] = useState<MindMapTree | null>(session?.tree ?? null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [saveMsg, setSaveMsg] = useState('');
   const previewBlobUrlCacheRef = useRef<Record<string, string>>({});
+  const dirtyRef = useRef(Boolean(session?.dirty));
+  const backupStateRef = useRef<{
+    path: string | null;
+    title: string;
+    tree: MindMapTree | null;
+    formatId: DocumentSession['formatId'];
+  }>({
+    path: session?.path ?? null,
+    title: session?.title ?? 'Untitled',
+    tree: session?.tree ?? null,
+    formatId: session?.formatId ?? 'mmforge',
+  });
 
   const captionLabel = session?.path ? fileName(session.path) : (title || 'Untitled');
 
@@ -37,17 +52,65 @@ export function EditorPage() {
     void setWindowCaption(documentWindowCaption(captionLabel));
   }, [captionLabel]);
 
+  useEffect(() => {
+    backupStateRef.current = {
+      path: session?.path ?? null,
+      title,
+      tree: currentTree,
+      formatId: session?.formatId ?? 'mmforge',
+    };
+  }, [session?.path, session?.formatId, title, currentTree]);
+
+  const flushUnsavedBackup = useCallback(async () => {
+    const state = backupStateRef.current;
+    if (!dirtyRef.current || !state.tree || !isTauri()) return;
+    try {
+      await writeUnsavedBackup({
+        path: state.path,
+        title: state.title,
+        tree: state.tree,
+        formatId: state.formatId,
+      });
+    } catch {
+      // Best-effort: never block leave/quit on backup failure.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    void (async () => {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window');
+      if (cancelled) return;
+      unlisten = await getCurrentWindow().onCloseRequested(async () => {
+        await flushUnsavedBackup();
+      });
+    })();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [flushUnsavedBackup]);
+
   const syncFromSession = useCallback((next = useDocumentStore.getState().session) => {
     if (!next) return;
     setTitle(next.title);
     setInitialTree(next.tree);
+    setInitialDirty(Boolean(next.dirty));
     setCurrentTree(next.tree);
+    dirtyRef.current = Boolean(next.dirty);
     setEditorKey((k) => k + 1);
   }, []);
 
   useEffect(() => {
     if (!session) {
-      setSession(newDocument());
+      let cancelled = false;
+      void (async () => {
+        const next = await restoreOrCreateNew();
+        if (!cancelled) setSession(next);
+      })();
+      return () => { cancelled = true; };
     }
   }, [session, setSession]);
 
@@ -69,6 +132,11 @@ export function EditorPage() {
     [recent, session?.path],
   );
 
+  const handleDirtyChange = useCallback((dirty: boolean) => {
+    dirtyRef.current = dirty;
+    markDirty(dirty);
+  }, [markDirty]);
+
   const handleSave = useCallback(async (tree: MindMapTree, currentTitle: string) => {
     setSaving(true);
     setError('');
@@ -77,7 +145,8 @@ export function EditorPage() {
       const saved = await save(tree, currentTitle || title);
       setTitle(saved.title);
       setCurrentTree(saved.tree);
-      setInitialTree(saved.tree);
+      // Do not touch initialTree / editorKey — undo history must survive Save.
+      dirtyRef.current = false;
       setSaveMsg(saved.path ? 'Saved' : 'Downloaded');
       setTimeout(() => setSaveMsg(''), 3000);
     } catch (err) {
@@ -95,7 +164,7 @@ export function EditorPage() {
       const saved = await saveAs(currentTree, title);
       setTitle(saved.title);
       setCurrentTree(saved.tree);
-      setInitialTree(saved.tree);
+      dirtyRef.current = false;
       setSaveMsg(saved.path ? 'Saved' : 'Downloaded');
       setTimeout(() => setSaveMsg(''), 3000);
     } catch (err) {
@@ -105,15 +174,22 @@ export function EditorPage() {
     }
   }, [currentTree, saveAs, title]);
 
-  const handleNew = useCallback(() => {
-    createNew();
+  const handleNew = useCallback(async () => {
+    await flushUnsavedBackup();
+    await createNew();
     syncFromSession();
-  }, [createNew, syncFromSession]);
+  }, [createNew, flushUnsavedBackup, syncFromSession]);
 
   const handleOpen = useCallback(async () => {
+    await flushUnsavedBackup();
     const opened = await openViaDialog();
     if (opened) syncFromSession(opened);
-  }, [openViaDialog, syncFromSession]);
+  }, [flushUnsavedBackup, openViaDialog, syncFromSession]);
+
+  const handleBack = useCallback(async () => {
+    await flushUnsavedBackup();
+    navigate('/');
+  }, [flushUnsavedBackup, navigate]);
 
   const handleExport = useCallback(async (format: ExportFormat, tree: MindMapTree, baseName: string) => {
     const blob = await format.serialize(tree.root, baseName);
@@ -197,12 +273,13 @@ export function EditorPage() {
 
   const handleOpenFileLink = useCallback(async (path: string) => {
     try {
+      await flushUnsavedBackup();
       const opened = await openPath(path);
       syncFromSession(opened);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to open linked file');
     }
-  }, [openPath, syncFromSession]);
+  }, [flushUnsavedBackup, openPath, syncFromSession]);
 
   if (!session || !initialTree) {
     return (
@@ -221,16 +298,18 @@ export function EditorPage() {
         linkableFilesLoading={false}
         onRequestLinkableFiles={() => undefined}
         onOpenFileLink={(path) => { void handleOpenFileLink(path); }}
-        onNewDocument={handleNew}
+        onNewDocument={() => { void handleNew(); }}
         onOpenDocument={() => { void handleOpen(); }}
         onSaveAsDocument={() => { void handleSaveAs(); }}
         initialTree={initialTree}
+        initialDirty={initialDirty}
         title={title}
         onSave={handleSave}
         saving={saving}
         saveMsg={saveMsg}
         error={error}
-        onBack={() => navigate('/')}
+        onBack={() => { void handleBack(); }}
+        onDirtyChange={handleDirtyChange}
         exportFormats={EXPORT_FORMATS}
         onExport={handleExport}
         versionLabel={session.path ? fileName(session.path) : 'Untitled'}

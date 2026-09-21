@@ -4,6 +4,8 @@ import type { LinkableFile } from './MindMapFileLinkDialog';
 
 export interface MindMapEditorProps {
   initialTree: MindMapTree | null;
+  /** When true, the freshly opened tree is already dirty (e.g. restored backup). */
+  initialDirty?: boolean;
   initialShowShortcuts?: boolean;
   disableAutoPanToSelection?: boolean;
   externalNodeAttachments?: Record<string, NodeAttachmentRef[]>;
@@ -37,4 +39,6 @@ export interface MindMapEditorProps {
   onNewDocument?: () => void;
   onOpenDocument?: () => void;
   onSaveAsDocument?: () => void;
+  /** Fired whenever the editor's dirty flag changes. */
+  onDirtyChange?: (dirty: boolean) => void;
 }

@@ -2,9 +2,9 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { DocumentSession, RecentFileEntry } from './types';
 import {
-  newDocument,
   openDocumentFromPath,
   openDocumentViaDialog,
+  restoreOrCreateNew,
   saveDocument,
   saveDocumentAs,
 } from './io';
@@ -20,7 +20,7 @@ interface DocumentStore {
   markDirty: (dirty: boolean) => void;
   updateTree: (tree: MindMapTree) => void;
   updateTitle: (title: string) => void;
-  createNew: () => DocumentSession;
+  createNew: () => Promise<DocumentSession>;
   openViaDialog: () => Promise<DocumentSession | null>;
   openPath: (path: string) => Promise<DocumentSession>;
   save: (tree: MindMapTree, title: string) => Promise<DocumentSession>;
@@ -64,8 +64,8 @@ export const useDocumentStore = create<DocumentStore>()(
         set({ session: { ...session, title, dirty: true } });
       },
 
-      createNew: () => {
-        const session = newDocument();
+      createNew: async () => {
+        const session = await restoreOrCreateNew();
         set({ session });
         return session;
       },

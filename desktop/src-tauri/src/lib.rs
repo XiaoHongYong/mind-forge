@@ -1,6 +1,8 @@
 mod file_io;
+mod unsaved_backup;
 
 use file_io::{read_user_file, save_export_file, write_user_file};
+use unsaved_backup::{delete_unsaved_backup, read_unsaved_backup, write_unsaved_backup};
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder, Submenu, SubmenuBuilder},
     Emitter,
@@ -204,6 +206,9 @@ pub fn run() {
             read_user_file,
             write_user_file,
             save_export_file,
+            write_unsaved_backup,
+            read_unsaved_backup,
+            delete_unsaved_backup,
         ])
         .run(tauri::generate_context!())
         .expect("error while running MindForge desktop");

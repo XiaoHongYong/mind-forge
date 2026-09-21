@@ -46,6 +46,22 @@ EditorPage (/editor)
 Routing never embeds absolute paths (length / encoding / privacy). The session
 store holds the path.
 
+## Unsaved backups
+
+There is no autosave to the user file. Save is explicit. Undo history is kept
+across Save, so edits from before the last Save remain undoable.
+
+On leave/quit with dirty edits, the live tree is written to the app data
+directory (`unsaved-backups/`):
+
+| Kind | Key | Restore rule |
+|---|---|---|
+| Path-backed | hash of absolute path | Restore only if on-disk SHA-256 still matches the hash recorded at backup time; then mark dirty and delete the backup. A mismatched hash discards it. |
+| Untitled (never saved) | `__mindforge_untitled__` | Payload has `path: null` and `neverSaved: true` (no associated file). Restored on the next New / empty editor session as a dirty untitled buffer, then deleted. |
+
+A successful Save As clears the untitled slot. A successful in-place Save clears
+that path's slot.
+
 ## Desktop file IO
 
 | Shell | File IO |

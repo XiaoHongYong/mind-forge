@@ -22,6 +22,7 @@ import {
 } from './fileAccess';
 import { isTauri } from '../storage';
 import { downloadBlob } from '../utils/download';
+import { deleteUnsavedBackup, takeMatchingUnsavedBackup, takeUntitledUnsavedBackup, sessionFromUntitledBackup } from './unsavedBackup';
 
 function fileNameFromPath(path: string): string {
   return path.split(/[/\\]/).pop() ?? path;
@@ -46,12 +47,23 @@ export async function openDocumentFromPath(path: string): Promise<DocumentSessio
   const formatId = formatIdFromPath(path);
   const title = titleFromPath(path);
   const root = await parseBytes(bytes, formatId, title, fileNameFromPath(path));
-  return {
+  const session: DocumentSession = {
     path,
     title,
     tree: { version: 'tree', root },
     formatId,
     dirty: false,
+  };
+
+  const backup = await takeMatchingUnsavedBackup(path, bytes);
+  if (!backup) return session;
+
+  return {
+    ...session,
+    title: backup.title || title,
+    tree: backup.tree,
+    formatId: backup.formatId || formatId,
+    dirty: true,
   };
 }
 
@@ -88,6 +100,16 @@ export function newDocument(title = 'Untitled'): DocumentSession {
   };
 }
 
+/**
+ * Prefer restoring a never-saved untitled backup; otherwise start blank.
+ * Marks the session dirty and path-less when a backup is applied.
+ */
+export async function restoreOrCreateNew(title = 'Untitled'): Promise<DocumentSession> {
+  const backup = await takeUntitledUnsavedBackup();
+  if (backup) return sessionFromUntitledBackup(backup);
+  return newDocument(title);
+}
+
 async function serializeSession(
   tree: MindMapTree,
   title: string,
@@ -115,6 +137,7 @@ export async function saveDocument(
     const formatId = exportFormatIdForPath(session.path);
     const bytes = await serializeSession(tree, title, formatId);
     await writeFileBytes(session.path, bytes);
+    await deleteUnsavedBackup(session.path);
     return { ...session, path: session.path, title, tree, formatId, dirty: false };
   }
   return saveDocumentAs(session, tree, title);
@@ -139,6 +162,12 @@ export async function saveDocumentAs(
     const resolvedFormat = exportFormatIdForPath(path);
     const bytes = await serializeSession(tree, title, resolvedFormat);
     await writeFileBytes(path, bytes);
+    // Save As always clears the untitled slot; also drop any previous path slot.
+    await deleteUnsavedBackup(null);
+    if (session.path && session.path !== path) {
+      await deleteUnsavedBackup(session.path);
+    }
+    await deleteUnsavedBackup(path);
     return {
       path,
       title: titleFromPath(path) || title,

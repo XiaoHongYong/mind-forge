@@ -21,8 +21,10 @@ export function HomePage() {
   const goEditor = useCallback(() => navigate('/editor'), [navigate]);
 
   const handleNew = useCallback(() => {
-    createNew();
-    goEditor();
+    void (async () => {
+      await createNew();
+      goEditor();
+    })();
   }, [createNew, goEditor]);
 
   const handleOpen = useCallback(async () => {

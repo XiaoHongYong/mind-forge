@@ -2,7 +2,6 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
 export type ThemeMode = 'dark' | 'light';
-export type AutosaveMode = 'change' | '30s' | '5m' | 'never';
 
 interface ThemeState {
   mode: ThemeMode;
@@ -13,11 +12,9 @@ interface ThemeState {
    * clearing this hands the canvas back to whichever palette is active.
    */
   canvasColor: string | null;
-  autosaveMode: AutosaveMode;
   setMode: (mode: ThemeMode) => void;
   setPrimaryColor: (color: string) => void;
   setCanvasColor: (color: string | null) => void;
-  setAutosaveMode: (mode: AutosaveMode) => void;
   toggleMode: () => void;
 }
 
@@ -27,11 +24,9 @@ export const useThemeStore = create<ThemeState>()(
       mode: 'dark',
       primaryColor: '#6366f1',
       canvasColor: null,
-      autosaveMode: 'change',
       setMode: (mode) => set({ mode }),
       setPrimaryColor: (primaryColor) => set({ primaryColor }),
       setCanvasColor: (canvasColor) => set({ canvasColor }),
-      setAutosaveMode: (autosaveMode) => set({ autosaveMode }),
       toggleMode: () => set({ mode: get().mode === 'dark' ? 'light' : 'dark' }),
     }),
     { name: 'mindforge-theme' },

@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { VaultIcon } from './Logo';
 import { LegalDocumentDialog, type LegalDocument } from './LegalDocumentDialog';
 import { APP_VERSION, CHANGELOG, type ChangeKind } from '../changelog';
-import { AutosaveMode, useThemeStore } from '../store/theme';
+import { useThemeStore } from '../store/theme';
 import {
   useUiStore,
   useEffectiveKeyboardLayout,
@@ -23,13 +23,6 @@ const PRESETS = [
 ];
 
 const CANVAS_PRESETS = CANVAS_COLOR_PRESETS;
-
-const autosaveOptions: Array<{ value: AutosaveMode; label: string }> = [
-  { value: 'change', label: 'After each change' },
-  { value: '30s', label: 'Every 30 seconds' },
-  { value: '5m', label: 'Every 5 minutes' },
-  { value: 'never', label: 'Never' },
-];
 
 const icons: Record<SettingsTab, ReactNode> = {
   changelog: (
@@ -221,21 +214,17 @@ function AppearanceTab({
   mode,
   primaryColor,
   canvasColor,
-  autosaveMode,
   toggleMode,
   setPrimaryColor,
   setCanvasColor,
-  setAutosaveMode,
   onOpenLegal,
 }: {
   mode: 'dark' | 'light';
   primaryColor: string;
   canvasColor: string | null;
-  autosaveMode: AutosaveMode;
   toggleMode: () => void;
   setPrimaryColor: (color: string) => void;
   setCanvasColor: (color: string | null) => void;
-  setAutosaveMode: (mode: AutosaveMode) => void;
   onOpenLegal: (doc: LegalDocument) => void;
 }) {
   return (
@@ -345,24 +334,6 @@ function AppearanceTab({
           The toolbar, nodes and panels take their colour from this too, so the editor
           stays of a piece. A pale background gets dark text whichever mode you are in;
           your accent colour is left alone. “Match theme” hands it all back.
-        </p>
-      </section>
-
-      <section className="border-t pt-6" style={{ borderColor: 'var(--border)' }}>
-        <SectionLabel>Autosave</SectionLabel>
-        <select
-          value={autosaveMode}
-          onChange={(e) => setAutosaveMode(e.target.value as AutosaveMode)}
-          aria-label="Autosave"
-          className="w-full rounded-lg px-3 py-2 text-sm"
-          style={{ background: 'var(--surface-2)', color: 'var(--text-primary)', border: '1px solid var(--border-light)' }}
-        >
-          {autosaveOptions.map((option) => (
-            <option key={option.value} value={option.value}>{option.label}</option>
-          ))}
-        </select>
-        <p className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
-          Choose whether document edits save after each change, on an interval, or only when saved manually.
         </p>
       </section>
 
@@ -579,8 +550,8 @@ interface SettingsModalProps {
  */
 export function SettingsModal({ open, onClose, initialTab = 'appearance' }: SettingsModalProps) {
   const {
-    mode, primaryColor, canvasColor, autosaveMode,
-    toggleMode, setPrimaryColor, setCanvasColor, setAutosaveMode,
+    mode, primaryColor, canvasColor,
+    toggleMode, setPrimaryColor, setCanvasColor,
   } = useThemeStore();
 
   const [tab, setTab] = useState<SettingsTab>(initialTab);
@@ -667,11 +638,9 @@ export function SettingsModal({ open, onClose, initialTab = 'appearance' }: Sett
                   mode={mode}
                   primaryColor={primaryColor}
                   canvasColor={canvasColor}
-                  autosaveMode={autosaveMode}
                   toggleMode={toggleMode}
                   setPrimaryColor={setPrimaryColor}
                   setCanvasColor={setCanvasColor}
-                  setAutosaveMode={setAutosaveMode}
                   onOpenLegal={setLegalDocument}
                 />
               )}
