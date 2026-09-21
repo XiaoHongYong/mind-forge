@@ -11,7 +11,7 @@
  * • Custom URLs per node                                    U key
  * • Move up / down siblings
  * • Duplicate node
- * • Search bar                                              Ctrl+F
+ * • Floating find / replace                                   Ctrl+F
  * • Reset node position                                     R key
  * • All existing features preserved
  */
@@ -115,6 +115,32 @@ import { FormatSidebar, type FormatSidebarTab } from './FormatSidebar';
 import { matchShortcut, formatShortcut, formatButtonShortcut, SHORTCUTS } from '../shortcuts/registry';
 import { isMac } from '../platform/isMac';
 import './MindMapEditor.css';
+
+/** Case-insensitive literal replace. `all` replaces every hit; otherwise the first. */
+function replaceLiteral(text: string, query: string, replacement: string, all: boolean): string {
+  if (!query) return text;
+  const haystack = text.toLowerCase();
+  const needle = query.toLowerCase();
+  if (!all) {
+    const at = haystack.indexOf(needle);
+    if (at < 0) return text;
+    return text.slice(0, at) + replacement + text.slice(at + needle.length);
+  }
+  let out = '';
+  let from = 0;
+  while (from <= text.length) {
+    const at = haystack.indexOf(needle, from);
+    if (at < 0) {
+      out += text.slice(from);
+      break;
+    }
+    out += text.slice(from, at) + replacement;
+    const next = at + needle.length;
+    if (next <= from) break;
+    from = next;
+  }
+  return out;
+}
 
 function NodeBubble({
   x, y, w, h, shape, rx, fill, stroke, strokeWidth, className,
@@ -287,6 +313,13 @@ export function DesktopMindMapEditor({
     if (typeof raw !== 'number' || !Number.isFinite(raw)) return 1;
     return Math.min(3, Math.max(0.3, raw));
   });
+  // Toolbar Fit toggles between fitting the map and 100%. Any other zoom
+  // gesture drops the preset so the next click fits again.
+  const [zoomPreset, setZoomPreset] = useState<'fit' | 'hundred' | null>(null);
+  const nudgeZoom = useCallback((delta: number) => {
+    setZoomPreset(null);
+    setZoom((z) => Math.min(3, Math.max(0.3, z + delta)));
+  }, []);
   const [pan, setPan] = useState(() => {
     const panX = initialTree?.view_state?.pan_x;
     const panY = initialTree?.view_state?.pan_y;
@@ -333,9 +366,13 @@ export function DesktopMindMapEditor({
   // ── Search ─────────────────────────────────────────────────────────────────
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [replaceOpen, setReplaceOpen] = useState(false);
+  const [replaceText, setReplaceText] = useState('');
   const [searchResults, setSearchResults] = useState<string[]>([]);
   const [searchIdx, setSearchIdx] = useState(0);
   const searchRef = useRef<HTMLInputElement>(null);
+  const replaceRef = useRef<HTMLInputElement>(null);
+  const prevSearchQuery = useRef(searchQuery);
 
   // ── Export menu ────────────────────────────────────────────────────────────
   const [showExportMenu, setShowExportMenu] = useState(false);
@@ -611,6 +648,7 @@ export function DesktopMindMapEditor({
       : 1;
     setPan({ x: nextPanX, y: nextPanY });
     setZoom(nextZoom);
+    setZoomPreset(null);
     setFocusMode(Boolean(savedView?.focus_mode));
     setFocusAnchorId(nextFocusAnchor);
     setLayoutMode(inferRootLayoutMode(r, savedView?.layout_mode));
@@ -1345,14 +1383,29 @@ export function DesktopMindMapEditor({
 
   // ── Search ────────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!searchQuery.trim()) { setSearchResults([]); return; }
+    if (!searchOpen) return;
+    const timer = window.setTimeout(() => searchRef.current?.focus(), 50);
+    return () => window.clearTimeout(timer);
+  }, [searchOpen]);
+
+  useEffect(() => {
+    if (!searchOpen || !searchQuery.trim()) {
+      setSearchResults([]);
+      prevSearchQuery.current = searchQuery;
+      return;
+    }
     const q = searchQuery.toLowerCase();
-    const all = flattenAll(root);
-    const matches = all.filter((n) => n.text.toLowerCase().includes(q)).map((n) => n.id);
+    const matches = flattenAll(root).filter((n) => n.text.toLowerCase().includes(q)).map((n) => n.id);
+    const queryChanged = prevSearchQuery.current !== searchQuery;
+    prevSearchQuery.current = searchQuery;
     setSearchResults(matches);
-    setSearchIdx(0);
-    if (matches.length > 0) setSelectedId(matches[0]);
-  }, [searchQuery, root]);
+    if (queryChanged) {
+      setSearchIdx(0);
+      if (matches[0]) setSelectedId(matches[0]);
+    } else {
+      setSearchIdx((idx) => (matches.length === 0 ? 0 : Math.min(idx, matches.length - 1)));
+    }
+  }, [searchOpen, searchQuery, root]);
 
   const searchNext = useCallback(() => {
     if (searchResults.length === 0) return;
@@ -1367,6 +1420,36 @@ export function DesktopMindMapEditor({
     setSearchIdx(prev);
     setSelectedId(searchResults[prev]);
   }, [searchResults, searchIdx]);
+
+  const replaceCurrent = useCallback(() => {
+    const id = searchResults[searchIdx];
+    if (!id || !searchQuery) return;
+    const found = findNode(root, id);
+    if (!found) return;
+    const updated = replaceLiteral(found.node.text, searchQuery, replaceText, false);
+    if (updated === found.node.text) return;
+    const next = editNode(root, id, (node) => { node.text = updated; });
+    if (!next) return;
+    mutate(next);
+    if (updated.toLowerCase().includes(searchQuery.toLowerCase())) return;
+    const remaining = searchResults.filter((nodeId) => nodeId !== id);
+    if (remaining.length === 0) return;
+    const nextIdx = Math.min(searchIdx, remaining.length - 1);
+    setSearchIdx(nextIdx);
+    setSelectedId(remaining[nextIdx]);
+  }, [mutate, replaceText, root, searchIdx, searchQuery, searchResults]);
+
+  const replaceAllMatches = useCallback(() => {
+    if (!searchQuery || searchResults.length === 0) return;
+    let changed = false;
+    const next = editNodes(root, searchResults, (node) => {
+      const updated = replaceLiteral(node.text, searchQuery, replaceText, true);
+      if (updated === node.text) return;
+      node.text = updated;
+      changed = true;
+    });
+    if (changed) mutate(next);
+  }, [mutate, replaceText, root, searchQuery, searchResults]);
 
   // ── Auto-pan to selected node ─────────────────────────────────────────────
   useLayoutEffect(() => {
@@ -1626,9 +1709,12 @@ export function DesktopMindMapEditor({
       },
       // No toast for search / zoom — matches the pre-registry behaviour,
       // which never announced these (search opens visibly; zoom repeats fast).
-      'find.search': () => { setSearchOpen(true); setTimeout(() => searchRef.current?.focus(), 50); },
-      'view.zoomIn': () => { setZoom((z) => Math.min(3, z + 0.15)); },
-      'view.zoomOut': () => { setZoom((z) => Math.max(0.3, z - 0.15)); },
+      'find.search': () => {
+        setSearchOpen(true);
+        setTimeout(() => searchRef.current?.focus(), 50);
+      },
+      'view.zoomIn': () => { nudgeZoom(0.15); },
+      'view.zoomOut': () => { nudgeZoom(-0.15); },
       'view.zoomFit': () => fitView(),
       'nav.back': () => { onBack?.(); },
       'view.colourTray': () => {
@@ -1657,7 +1743,7 @@ export function DesktopMindMapEditor({
     toggleCheckbox, undo, redo, toggleCollapse, showToast, resetNodePosition, resetAllPositions, autoAlignSubtree, showIconPicker, showColorPicker, focusMode, focusedIds,
     hasBulk, bulkDelete, bulkToggleCheckbox, bulkCycleProgress, bulkToggleCollapse, bulkResetPosition, keyboardLayout,
     colourTrayEnabled, setColourTray, iconTrayEnabled, setIconTray, openFileLinkPicker, onOpenFileLink,
-    toggleLayoutMode, layoutMode, formatSidebarOpen, setFormatSidebarOpen]);
+    toggleLayoutMode, layoutMode, formatSidebarOpen, setFormatSidebarOpen, nudgeZoom]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -1688,9 +1774,9 @@ export function DesktopMindMapEditor({
   // no-op and ctrl+wheel zoom also scrolls/zooms the page. Bind natively with
   // { passive: false } instead.
   const onWheelNative = useCallback((e: WheelEvent) => {
-    if (e.ctrlKey || e.metaKey) { e.preventDefault(); setZoom((z) => Math.min(3, Math.max(0.3, z - e.deltaY * 0.001))); }
+    if (e.ctrlKey || e.metaKey) { e.preventDefault(); nudgeZoom(-e.deltaY * 0.001); }
     else setPan((p) => ({ x: p.x - e.deltaX, y: p.y - e.deltaY }));
-  }, []);
+  }, [nudgeZoom]);
 
   useEffect(() => {
     const el = svgRef.current;
@@ -2084,7 +2170,28 @@ export function DesktopMindMapEditor({
     const z = Math.min(Math.min(scaleX, scaleY), 2);
     setZoom(z);
     setPan({ x: pad - minX * z, y: pad - minY * z });
+    setZoomPreset('fit');
   }, [layout]);
+
+  const zoomToHundred = useCallback(() => {
+    const el = containerRef.current;
+    const z = zoom;
+    if (el && z > 0) {
+      const { width, height } = el.getBoundingClientRect();
+      const cx = width / 2;
+      const cy = height / 2;
+      const wx = (cx - pan.x) / z;
+      const wy = (cy - pan.y) / z;
+      setPan({ x: cx - wx, y: cy - wy });
+    }
+    setZoom(1);
+    setZoomPreset('hundred');
+  }, [pan.x, pan.y, zoom]);
+
+  const toggleZoomFit = useCallback(() => {
+    if (zoomPreset === 'fit') zoomToHundred();
+    else fitView();
+  }, [fitView, zoomPreset, zoomToHundred]);
 
   // ══════════════════════════════════════════════════════════════════════════
   //  NATIVE MENU BRIDGE
@@ -2161,10 +2268,10 @@ export function DesktopMindMapEditor({
           setStatusBarOverride(!statusBarVisible);
           break;
         case 'view.zoomIn':
-          setZoom((z) => Math.min(3, z + 0.15));
+          nudgeZoom(0.15);
           break;
         case 'view.zoomOut':
-          setZoom((z) => Math.max(0.3, z - 0.15));
+          nudgeZoom(-0.15);
           break;
         case 'view.zoomFit':
           fitView();
@@ -2775,12 +2882,13 @@ export function DesktopMindMapEditor({
             );
             const alignBtn =<button key="align" className="mm-btn" data-label="Align" data-shortcut={formatButtonShortcut('node.autoAlign', keyboardLayout)} onClick={() => autoAlignSubtree(selectedId)} title={`${selectedId === 'root' ? 'Auto-align all nodes' : 'Auto-align subtree'} (${formatShortcut('node.autoAlign', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 6h18M3 12h12M3 18h8"/></svg></button>;
             const focusBtn = <button key="focus" className={`mm-btn${focusMode ? ' mm-btn--active' : ''}`} data-label="Focus" data-shortcut={formatButtonShortcut('view.focusMode', keyboardLayout)} onClick={() => { setFocusMode((v) => { if (!v) setFocusAnchorId(selectedId); return !v; }); }} title={`Focus mode (${formatShortcut('view.focusMode', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="3"/><path d="M12 1v2m0 18v2m8.66-17.66l-1.41 1.41M4.75 19.25l-1.41 1.41M23 12h-2M3 12H1m17.66 7.66l-1.41-1.41M4.75 4.75L3.34 3.34"/></svg></button>;
-            const searchBtn = <button key="search" className="mm-btn mm-essential" data-label="Search" data-shortcut={formatButtonShortcut('find.search', keyboardLayout)} onClick={() => { setSearchOpen(true); setTimeout(() => searchRef.current?.focus(), 50); }} title={`Search (${formatShortcut('find.search', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>;
+            const searchBtn = <button key="search" className={`mm-btn mm-essential${searchOpen ? ' mm-btn--active' : ''}`} data-label="Search" data-shortcut={formatButtonShortcut('find.search', keyboardLayout)} onClick={() => setSearchOpen((open) => !open)} title={`${searchOpen ? 'Hide search' : 'Search'} (${formatShortcut('find.search', keyboardLayout)})`} aria-pressed={searchOpen}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>;
             const shortcutsBtn = <button key="shortcuts" className="mm-btn" data-label="Shortcuts" data-shortcut={formatButtonShortcut('find.shortcuts', keyboardLayout)} onClick={() => setShowShortcuts((v) => !v)} title={`Shortcuts (${formatShortcut('find.shortcuts', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg></button>;
+            const zoomFitted = zoomPreset === 'fit';
             const zoomGroup = (densityPreset !== 'large' || activeRibbonTab === 'view') && toolbarGroup('Zoom', <>
-              <button className="mm-btn" data-label="Zoom in" data-shortcut={formatButtonShortcut('view.zoomIn', keyboardLayout)} onClick={() => setZoom((z) => Math.min(3, z + 0.15))} title={`Zoom in (${formatShortcut('view.zoomIn', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="11" cy="11" r="8"/><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M11 8v6m-3-3h6"/></svg></button>
-              <button className="mm-btn" data-label="Zoom out" data-shortcut={formatButtonShortcut('view.zoomOut', keyboardLayout)} onClick={() => setZoom((z) => Math.max(0.3, z - 0.15))} title={`Zoom out (${formatShortcut('view.zoomOut', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="11" cy="11" r="8"/><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M8 11h6"/></svg></button>
-              <button className="mm-btn" data-label="Fit" data-shortcut={formatButtonShortcut('view.zoomFit', keyboardLayout)} onClick={fitView} title={`Fit view (${formatShortcut('view.zoomFit', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5"/></svg></button>
+              <button className="mm-btn" data-label="Zoom in" data-shortcut={formatButtonShortcut('view.zoomIn', keyboardLayout)} onClick={() => nudgeZoom(0.15)} title={`Zoom in (${formatShortcut('view.zoomIn', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="11" cy="11" r="8"/><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M11 8v6m-3-3h6"/></svg></button>
+              <button className="mm-btn" data-label="Zoom out" data-shortcut={formatButtonShortcut('view.zoomOut', keyboardLayout)} onClick={() => nudgeZoom(-0.15)} title={`Zoom out (${formatShortcut('view.zoomOut', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="11" cy="11" r="8"/><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M8 11h6"/></svg></button>
+              <button className={`mm-btn${zoomFitted ? ' mm-btn--active' : ''}`} data-label={zoomFitted ? '100%' : 'Fit'} data-shortcut={zoomFitted ? undefined : formatButtonShortcut('view.zoomFit', keyboardLayout)} onClick={toggleZoomFit} title={zoomFitted ? 'Zoom to 100%' : `Fit view (${formatShortcut('view.zoomFit', keyboardLayout)})`} aria-pressed={zoomFitted}>{zoomFitted ? <span className="mm-zoom-pct">100%</span> : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5"/></svg>}</button>
             </>, 'view');
             const outputGroup = onExport && (densityPreset !== 'large' || activeRibbonTab === 'export') && toolbarGroup('Output', (
               <div style={{ position: 'relative' }}>
@@ -2879,9 +2987,9 @@ export function DesktopMindMapEditor({
                     ['node.icons', 'Icons', () => setShowIconPicker((v) => !v)],
                     ['node.dates', 'Dates', () => setShowDateDialog(true)],
                     ['node.labels', 'Tags', () => setShowTagDialog((v) => !v)],
-                    ['view.zoomIn', 'Zoom in', () => setZoom((z) => Math.min(3, z + 0.15))],
-                    ['view.zoomOut', 'Zoom out', () => setZoom((z) => Math.max(0.3, z - 0.15))],
-                    ['view.zoomFit', 'Fit view', fitView],
+                    ['view.zoomIn', 'Zoom in', () => nudgeZoom(0.15)],
+                    ['view.zoomOut', 'Zoom out', () => nudgeZoom(-0.15)],
+                    [zoomPreset === 'fit' ? '' : 'view.zoomFit', zoomPreset === 'fit' ? '100%' : 'Fit view', toggleZoomFit],
                     ['node.autoAlign', 'Auto-align', () => autoAlignSubtree(selectedId)],
                     ['view.focusMode', 'Focus mode', () => { setFocusMode((v) => { if (!v) setFocusAnchorId(selectedId); return !v; }); }],
                     ['view.formatSidebar', 'Format panel', () => setFormatSidebarOpen(!formatSidebarOpen)],
@@ -2903,18 +3011,6 @@ export function DesktopMindMapEditor({
           {densityPreset === 'lean' && <ThemePanel toolbarButton />}
         </div>
       </div>}
-
-      {/* ── Search bar ──────────────────────────────────────────────────── */}
-      {searchOpen && (
-        <div className="mm-search-bar">
-          <svg className="mm-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input ref={searchRef} className="mm-search-input" placeholder="Search nodes…" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) searchNext(); if (e.key === 'Enter' && e.shiftKey) searchPrev(); if (e.key === 'Escape') { setSearchOpen(false); setSearchQuery(''); setSearchResults([]); } e.stopPropagation(); }} />
-          {searchResults.length > 0 && <span className="mm-search-count">{searchIdx + 1}/{searchResults.length}</span>}
-          <button className="mm-btn-icon" onClick={() => { setSearchOpen(false); setSearchQuery(''); setSearchResults([]); }}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-        </div>
-      )}
 
       {/* ── Canvas + trays (docked per Settings -> Interface) ──────────── */}
       <div className={`mm-canvas-area${hasAnyTray ? ' mm-canvas-area--trays' : ''}`}>
@@ -2940,6 +3036,83 @@ export function DesktopMindMapEditor({
             </div>
           )}
       <div className="mm-canvas-wrap">
+        {searchOpen && (
+          <div
+            className="mm-find-widget"
+            role="search"
+            aria-label="Find"
+            onMouseDown={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setSearchOpen(false);
+              e.stopPropagation();
+            }}
+          >
+            <div className="mm-find-row">
+              <button
+                type="button"
+                className={`mm-find-btn mm-find-expand${replaceOpen ? ' mm-find-expand--open' : ''}`}
+                aria-expanded={replaceOpen}
+                aria-label={replaceOpen ? 'Hide replace' : 'Toggle replace'}
+                title={replaceOpen ? 'Hide replace' : 'Toggle replace'}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  setReplaceOpen((open) => !open);
+                  if (!replaceOpen) setTimeout(() => replaceRef.current?.focus(), 50);
+                }}
+              >
+                <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5 4.9 11.4 8.3 8 4.9 4.6z"/></svg>
+              </button>
+              <input
+                ref={searchRef}
+                className="mm-find-input"
+                placeholder="Find"
+                aria-label="Find"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); searchNext(); }
+                  else if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); searchPrev(); }
+                  else if (e.key === 'Escape') setSearchOpen(false);
+                  e.stopPropagation();
+                }}
+              />
+              <span className={`mm-find-count${searchQuery.trim() && searchResults.length === 0 ? ' mm-find-count--empty' : ''}`}>
+                {searchQuery.trim()
+                  ? (searchResults.length === 0 ? 'No results' : `${searchIdx + 1} of ${searchResults.length}`)
+                  : ''}
+              </span>
+              <button type="button" className="mm-find-btn" aria-label="Previous match" title="Previous match" disabled={searchResults.length === 0} onMouseDown={(e) => e.preventDefault()} onClick={searchPrev}>
+                <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 10l4-4 4 4"/></svg>
+              </button>
+              <button type="button" className="mm-find-btn" aria-label="Next match" title="Next match" disabled={searchResults.length === 0} onMouseDown={(e) => e.preventDefault()} onClick={searchNext}>
+                <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg>
+              </button>
+              <button type="button" className="mm-find-btn" aria-label="Close" title="Close" onMouseDown={(e) => e.preventDefault()} onClick={() => setSearchOpen(false)}>
+                <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/></svg>
+              </button>
+            </div>
+            {replaceOpen && (
+              <div className="mm-find-row">
+                <span className="mm-find-expand-spacer" aria-hidden="true" />
+                <input
+                  ref={replaceRef}
+                  className="mm-find-input"
+                  placeholder="Replace"
+                  aria-label="Replace"
+                  value={replaceText}
+                  onChange={(e) => setReplaceText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); replaceCurrent(); }
+                    else if (e.key === 'Escape') setSearchOpen(false);
+                    e.stopPropagation();
+                  }}
+                />
+                <button type="button" className="mm-find-text-btn" title="Replace" disabled={!searchQuery.trim() || searchResults.length === 0} onMouseDown={(e) => e.preventDefault()} onClick={replaceCurrent}>Replace</button>
+                <button type="button" className="mm-find-text-btn" title="Replace All" disabled={!searchQuery.trim() || searchResults.length === 0} onMouseDown={(e) => e.preventDefault()} onClick={replaceAllMatches}>All</button>
+              </div>
+            )}
+          </div>
+        )}
         <svg
           ref={svgRef}
           className="mm-canvas"
@@ -3050,9 +3223,9 @@ export function DesktopMindMapEditor({
               onSetColorTheme={setColorTheme}
               onSetMapStyle={patchMapStyle}
               onToggleFocusMode={() => { setFocusMode((v) => { if (!v) setFocusAnchorId(selectedId); return !v; }); }}
-              onZoomIn={() => setZoom((z) => Math.min(3, z + 0.15))}
-              onZoomOut={() => setZoom((z) => Math.max(0.3, z - 0.15))}
-              onZoomReset={() => setZoom(1)}
+              onZoomIn={() => nudgeZoom(0.15)}
+              onZoomOut={() => nudgeZoom(-0.15)}
+              onZoomReset={() => { setZoomPreset(null); setZoom(1); }}
               onZoomFit={fitView}
               onClose={() => setFormatSidebarOpen(false)}
             />

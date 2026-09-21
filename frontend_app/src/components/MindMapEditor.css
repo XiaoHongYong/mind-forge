@@ -228,6 +228,17 @@
   font-family: inherit;
 }
 .mm-btn svg { width: var(--mm-btn-icon, 15px); height: var(--mm-btn-icon, 15px); flex-shrink: 0; }
+.mm-zoom-pct {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  min-width: var(--mm-btn-icon, 15px);
+  text-align: center;
+}
+.mm-root[data-toolbar-labels="true"] .mm-toolbar button.mm-btn:has(.mm-zoom-pct)::after {
+  content: none;
+}
 
 /* Toolbar labels: on by default at large density, toggleable independently
    via the Interface settings (data-toolbar-labels overrides the density-only
@@ -658,18 +669,111 @@
   flex-shrink: 0;
 }
 
-/* ── Search bar ──────────────────────────────────────────────────────────── */
-.mm-search-bar {
+/* ── Floating find / replace (VS Code-style) ────────────────────────────── */
+.mm-find-widget {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: min(420px, calc(100% - 24px));
+  padding: 4px;
+  background: var(--mm-toolbar-bg);
+  border: 1px solid var(--mm-toolbar-border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+.mm-find-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  background: var(--mm-toolbar-bg);
-  border-bottom: 1px solid var(--mm-toolbar-border);
-  flex-shrink: 0;
-  z-index: 10;
+  gap: 2px;
+  min-width: 0;
 }
-.mm-search-icon { width: 14px; height: 14px; color: var(--mm-btn-text); flex-shrink: 0; }
+.mm-find-input {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  background: var(--mm-btn-bg);
+  border: 1px solid var(--mm-btn-border);
+  border-radius: 4px;
+  padding: 0 8px;
+  font-size: 12px;
+  color: var(--text-primary);
+  outline: none;
+  font-family: inherit;
+}
+.mm-find-input:focus {
+  border-color: var(--accent);
+}
+.mm-find-count {
+  flex-shrink: 0;
+  min-width: 4.5em;
+  padding: 0 4px;
+  font-size: 11px;
+  color: var(--mm-statusbar-text);
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.mm-find-count--empty { color: #f59e0b; }
+.mm-find-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--mm-btn-text);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.mm-find-btn:hover:not(:disabled) {
+  background: var(--mm-btn-bg);
+  color: var(--mm-btn-text-hover);
+}
+.mm-find-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.mm-find-expand svg {
+  transition: transform 0.12s ease;
+}
+.mm-find-expand--open svg {
+  transform: rotate(90deg);
+}
+.mm-find-expand-spacer {
+  width: 22px;
+  flex-shrink: 0;
+}
+.mm-find-text-btn {
+  height: 22px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--mm-btn-text);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.mm-find-text-btn:hover:not(:disabled) {
+  background: var(--mm-btn-bg);
+  color: var(--mm-btn-text-hover);
+}
+.mm-find-text-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.mm-search-highlight {
+  fill: #f59e0b !important;
+  font-weight: bold;
+}
 
 /* ── Icon picker ─────────────────────────────────────────────────────────── */
 .mm-icon-picker {
@@ -765,30 +869,6 @@
   padding: 18px 8px;
   color: #888;
   font-size: 12px;
-}
-
-.mm-search-input {
-  flex: 1;
-  background: var(--mm-btn-bg);
-  border: 1px solid var(--mm-btn-border);
-  border-radius: 6px;
-  padding: 4px 10px;
-  font-size: 12px;
-  color: var(--text-primary);
-  outline: none;
-  font-family: inherit;
-  max-width: 300px;
-}
-.mm-search-input:focus { border-color: var(--accent); }
-.mm-search-count {
-  font-size: 11px;
-  color: var(--mm-statusbar-text);
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
-.mm-search-highlight {
-  fill: #f59e0b !important;
-  font-weight: bold;
 }
 
 /* ── Extended colour palette ─────────────────────────────────────────────── */
