@@ -1,41 +1,39 @@
-# File Document Architecture
+# 文件文档架构
 
-MindForge is a local-first mind-map editor. A document is a file on disk (or an
-untitled buffer until the first Save As). Persistence is path-centric: Open,
-Save, Save As, and Recent — no separate document library or sign-in.
+MindForge 是一款本地优先的思维导图编辑器。文档即磁盘上的文件（或在首次「另存为」之前的未命名缓冲区）。持久化以路径为中心：打开、保存、另存为、最近文件——没有独立的文档库，也无需登录。
 
-## Product model
+## 产品模型
 
-| Decision | Choice |
+| 决策 | 选择 |
 |---|---|
-| Persistence | Path-centric documents on disk |
-| At-rest crypto | None — files are plaintext |
-| Native format | `.mmforge` (lossless JSON envelope) |
-| Interchange | Open / Save As also support `.md`, `.mm`, `.wxml`, `.xmind` |
-| Home | Recent files + New / Open |
-| Accounts | None |
-| Cross-map links | `NodeLink { type: 'file', path, label? }` |
+| 持久化 | 以磁盘路径为中心的文档 |
+| 静态加密 | 无——文件为明文 |
+| 原生格式 | `.mmforge`（无损 JSON 封装） |
+| 互换格式 | 打开 / 另存为亦支持 `.md`、`.mm`、`.wxml`、`.xmind` |
+| 首页 | 最近文件 + 新建 / 打开 |
+| 账户 | 无 |
+| 跨图链接 | `NodeLink { type: 'file', path, label? }` |
 
-## Runtime model
+## 运行时模型
 
 ```text
 HomePage (/)
-  New  → untitled DocumentSession → /editor
-  Open → dialog → parse by extension → DocumentSession → /editor
-  Recent → openPath → /editor
+  新建  → 未命名 DocumentSession → /editor
+  打开  → 对话框 → 按扩展名解析 → DocumentSession → /editor
+  最近  → openPath → /editor
 
 EditorPage (/editor)
-  DocumentSession in memory (zustand)
-  Save     → write bytes to session.path (or Save As if untitled)
-  Save As  → dialog → write → update path + recent
-  Export   → serializers + destination dialog (interchange)
+  内存中的 DocumentSession（zustand）
+  保存     → 将字节写入 session.path（未命名则走另存为）
+  另存为   → 对话框 → 写入 → 更新 path + 最近文件
+  导出     → 序列化器 + 目标对话框（互换格式）
 ```
 
-`DocumentSession` is the only live document:
+`DocumentSession` 是唯一的活动文档：
 
 ```ts
 {
-  path: string | null;   // null = untitled / never saved
+  path: string | null;   // null = 未命名 / 从未保存
   title: string;
   tree: MindMapTree;
   formatId: 'mmforge' | 'md' | 'mm' | 'wxml' | 'xmind';
@@ -43,51 +41,45 @@ EditorPage (/editor)
 }
 ```
 
-Routing never embeds absolute paths (length / encoding / privacy). The session
-store holds the path.
+路由从不嵌入绝对路径（长度 / 编码 / 隐私）。路径由会话 store 持有。
 
-## Unsaved backups
+## 未保存备份
 
-There is no autosave to the user file. Save is explicit. Undo history is kept
-across Save, so edits from before the last Save remain undoable.
+不会自动写入用户文件。保存须显式触发。Undo 历史在保存后仍保留，因此仍可撤销到上次保存之前的编辑。
 
-On leave/quit with dirty edits, the live tree is written to the app data
-directory (`unsaved-backups/`):
+在离开 / 退出且存在未保存修改时，将当前树写入应用数据目录（`unsaved-backups/`）：
 
-| Kind | Key | Restore rule |
+| 类型 | 键 | 恢复规则 |
 |---|---|---|
-| Path-backed | hash of absolute path | Restore only if on-disk SHA-256 still matches the hash recorded at backup time; then mark dirty and delete the backup. A mismatched hash discards it. |
-| Untitled (never saved) | `__mindforge_untitled__` | Payload has `path: null` and `neverSaved: true` (no associated file). Restored on the next New / empty editor session as a dirty untitled buffer, then deleted. |
+| 已关联路径 | 绝对路径的 hash | 仅当磁盘文件的 SHA-256 仍与备份时记录的 hash 一致时恢复；随后标记为已修改并删除备份。hash 不一致则丢弃备份。 |
+| 未命名（从未保存） | `__mindforge_untitled__` | 载荷为 `path: null` 且 `neverSaved: true`（无关联文件）。下次新建 / 进入空编辑会话时恢复为已修改的未命名缓冲区，然后删除备份。 |
 
-A successful Save As clears the untitled slot. A successful in-place Save clears
-that path's slot.
+另存为成功会清除未命名备份槽；原地保存成功会清除该路径对应的备份槽。
 
-## Desktop file IO
+## 桌面端文件 IO
 
-| Shell | File IO |
+| 外壳 | 文件 IO |
 |---|---|
-| Desktop (Tauri) | Native open/save dialogs + `read_user_file` / `write_user_file` |
+| 桌面（Tauri） | 原生打开/保存对话框 + `read_user_file` / `write_user_file` |
 
-The webview `plugin-fs` ACL stays scoped to app directories. Only dialog-chosen
-(or recently opened) absolute paths go through the Rust commands above.
+Webview 的 `plugin-fs` ACL 仍限定在应用目录。仅对话框选出的（或最近打开过的）绝对路径走上述 Rust 命令。
 
-| Command | Role |
+| 命令 | 作用 |
 |---|---|
-| `read_user_file(path)` | Read bytes from a user-chosen absolute path |
-| `write_user_file(path, data_base64)` | Atomic write to a user-chosen absolute path |
+| `read_user_file(path)` | 从用户选定的绝对路径读取字节 |
+| `write_user_file(path, data_base64)` | 原子写入用户选定的绝对路径 |
 
-Recent files are tracked in the frontend (persisted preference store).
+最近文件由前端跟踪（持久化到偏好 store）。
 
-## Format pipeline
+## 格式流水线
 
-- **Open:** `IMPORT_FORMATS` parsers (bytes/text → tree)
-- **Save / Save As (untitled):** prefer `.mmforge` (`treeToMmforge`)
-- **Save in place:** serialize with the format implied by the path extension
-- **Export menu:** interchange matrix (may be lossy)
+- **打开：** `IMPORT_FORMATS` 解析器（字节/文本 → 树）
+- **保存 / 另存为（未命名）：** 优先 `.mmforge`（`treeToMmforge`）
+- **原地保存：** 按路径扩展名所对应的格式序列化
+- **导出菜单：** 互换格式矩阵（可能有损）
 
-Lossy formats (`.md`, `.mm`, …) may drop editor-only fields; `.mmforge` does not.
+有损格式（`.md`、`.mm` 等）可能丢失仅编辑器使用的字段；`.mmforge` 不会。
 
-## Security posture
+## 安全姿态
 
-Privacy is OS-level: file permissions, optional full-disk encryption, and where
-the user stores maps.
+隐私依赖操作系统层面：文件权限、可选的全盘加密，以及用户存放导图的位置。
