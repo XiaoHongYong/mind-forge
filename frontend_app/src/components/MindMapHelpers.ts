@@ -159,6 +159,7 @@ export const defaultRoot = (): MindMapTreeNode => ({
  */
 export const migrateNode = (node: MindMapTreeNode): MindMapTreeNode => {
   if (!node) return node;
+  if (!node.children) node.children = [];
   if (!node.icons) node.icons = [];
   if (!node.urls) node.urls = [];
   if (!node.attachments) node.attachments = [];
