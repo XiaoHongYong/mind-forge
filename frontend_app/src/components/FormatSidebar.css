@@ -2,7 +2,7 @@
 
 .mm-format-sidebar {
   flex-shrink: 0;
-  width: 300px;
+  width: 280px;
   display: flex;
   flex-direction: column;
   min-height: 0;

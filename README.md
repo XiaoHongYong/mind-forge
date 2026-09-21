@@ -16,7 +16,7 @@ Core components:
 
 High-level flow:
 
-1. User opens or creates a document (Home → New / Open / Recent).
+1. The app opens in the editor. Recent files and the document outline live in the left sidebar; New / Open / Save stay in the editor.
 2. The editor holds a `DocumentSession` in memory.
 3. Save writes the file back to the chosen path (or Save As).
 
@@ -178,7 +178,6 @@ resolves to ⌘ on macOS and Ctrl elsewhere. Press <kbd>F1</kbd> (FreeMind) /
 | Shortcuts (this table) | F1 | ⌘/ |
 | **File** | | |
 | Save | Ctrl+S | ⌘S |
-| Back to files | Alt+← | ⌘[ |
 
 Source of truth: `frontend_app/src/shortcuts/registry.ts`. The native menu bar
 mirrors the unambiguous modifier-based subset; bare-letter shortcuts stay

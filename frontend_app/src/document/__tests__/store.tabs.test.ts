@@ -136,4 +136,15 @@ describe('document store tabs', () => {
     expect(empty).toBeNull();
     expect(useDocumentStore.getState().sessions).toHaveLength(0);
   });
+
+  it('removeRecent drops one path and leaves the rest', () => {
+    useDocumentStore.setState({
+      recent: [
+        { path: '/tmp/a.mmforge', title: 'A', openedAt: '2020-01-02T00:00:00.000Z' },
+        { path: '/tmp/b.mmforge', title: 'B', openedAt: '2020-01-01T00:00:00.000Z' },
+      ],
+    });
+    useDocumentStore.getState().removeRecent('/tmp/a.mmforge');
+    expect(useDocumentStore.getState().recent.map((entry) => entry.path)).toEqual(['/tmp/b.mmforge']);
+  });
 });

@@ -85,11 +85,6 @@ export const SHORTCUTS: ShortcutDef[] = [
 
   // ── File ───────────────────────────────────────────────────────────────
   { id: 'file.save', label: 'Save', group: 'File', freemind: ['Mod+S'], mac: ['Mod+S'] },
-  // Each platform's own "navigate back" convention (Alt+Left on
-  // Windows/Linux browsers, Cmd+[ on macOS — Safari, Finder). Not Mod+W:
-  // that's already claimed by the native Close Window menu item, at the
-  // OS level, before it would ever reach this app's own key handling.
-  { id: 'nav.back', label: 'Back to lobby', group: 'File', freemind: ['Alt+ArrowLeft'], mac: ['Mod+['] },
 ];
 
 const BY_ID: Record<string, ShortcutDef> = Object.fromEntries(SHORTCUTS.map((s) => [s.id, s]));

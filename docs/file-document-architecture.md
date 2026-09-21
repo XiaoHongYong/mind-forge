@@ -10,24 +10,24 @@ MindForge 是一款本地优先的思维导图编辑器。文档即磁盘上的�
 | 静态加密 | 无——文件为明文 |
 | 原生格式 | `.mmforge`（无损 JSON 封装） |
 | 互换格式 | 打开 / 另存为亦支持 `.md`、`.mm`、`.wxml`、`.xmind` |
-| 首页 | 最近文件 + 新建 / 打开 |
+| 首页 | 无独立首页。启动进入编辑器；左侧栏为最近文件与当前文档大纲 |
 | 账户 | 无 |
 | 跨图链接 | `NodeLink { type: 'file', path, label? }` |
 
 ## 运行时模型
 
 ```text
-HomePage (/)
-  新建  → 未命名 DocumentSession（新 tab）→ /editor
-  打开  → 对话框 → 按扩展名解析 → DocumentSession（新 tab；同路径则激活已有）→ /editor
-  最近  → openPath → /editor
-
-EditorPage (/editor)
-  内存中的多文档 tabs（zustand：sessions[] + activeId）
-  标签栏   → VS Code 风格：切换 / 关闭 / 新建；脏点表示未保存
-  保存     → 将字节写入 active session.path（未命名则走另存为）
-  另存为   → 对话框 → 写入 → 更新 path + 最近文件
-  导出     → 序列化器 + 目标对话框（互换格式）
+EditorPage (/)
+  启动    → 恢复上次标签；若无则新建未命名文档
+  左侧栏  → Recent（按打开时间，新的在前，可从列表移除）/ Outline（当前文档）
+  大纲    → 点击选中画布节点；画布改节点时大纲立即更新；点选画布节点时大纲展开、滚入视口并选中
+  新建    → 未命名 DocumentSession（新 tab）
+  打开    → 对话框 → 按扩展名解析 → DocumentSession（新 tab；同路径则激活已有）
+  最近    → openPath（激活已有 tab 或新开）
+  标签栏  → VS Code 风格：切换 / 关闭 / 新建；脏点表示未保存
+  保存    → 将字节写入 active session.path（未命名则走另存为）
+  另存为  → 对话框 → 写入 → 更新 path + 最近文件
+  导出    → 序列化器 + 目标对话框（互换格式）
 ```
 
 每个 `DocumentSession` 是一个打开中的缓冲（一个 tab）：
@@ -45,7 +45,7 @@ EditorPage (/editor)
 
 同一绝对路径只对应一个 tab：再次打开会激活已有缓冲，而不是复制一份。
 
-退出应用后再打开时，会恢复上次的标签：已保存文件按路径重新打开（磁盘未变时带回未保存修改），从未保存的新建文档按快照中的树恢复。快照写在应用数据目录（`__mindforge_workspace__`），浏览器模式则写入 `localStorage`。回到首页不会丢掉这组标签；只有关掉全部标签后，下次启动才回到首页。
+退出应用后再打开时，会恢复上次的标签：已保存文件按路径重新打开（磁盘未变时带回未保存修改），从未保存的新建文档按快照中的树恢复。快照写在应用数据目录（`__mindforge_workspace__`），浏览器模式则写入 `localStorage`。关掉全部标签后会新建一份未命名文档，而不是离开编辑器。
 
 路由从不嵌入绝对路径（长度 / 编码 / 隐私）。路径由会话 store 持有。
 

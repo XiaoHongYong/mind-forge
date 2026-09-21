@@ -26,8 +26,7 @@ page in a shell that has no `<Router>` (or the wrong IPC).
 by construction. Coverage of the editor logic is already good; what matters for
 shell bugs is exercising the app *as that shell*.
 
-Desktop uses a **plaintext file document** model: Home → Open/Save → Editor.
-Shell smoke and E2E should exercise that flow (menus, open/save dialogs).
+Desktop uses a **plaintext file document** model: the editor opens directly, with recent files and the outline in the left sidebar. Shell smoke and E2E should exercise open/save (menus, dialogs), not a separate home screen.
 
 ---
 

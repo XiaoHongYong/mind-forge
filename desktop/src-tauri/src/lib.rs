@@ -44,8 +44,21 @@ fn build_app_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result
         .build()
 }
 
+fn build_export_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Submenu<R>> {
+    SubmenuBuilder::new(app, "Export")
+        .item(&MenuItemBuilder::with_id("file.export.mmforge", "MindForge (.mmforge)").build(app)?)
+        .item(&MenuItemBuilder::with_id("file.export.md", "Markdown (.md)").build(app)?)
+        .item(&MenuItemBuilder::with_id("file.export.freemind", "FreeMind (.mm)").build(app)?)
+        .item(&MenuItemBuilder::with_id("file.export.freeplane", "FreePlane (.mm)").build(app)?)
+        .item(&MenuItemBuilder::with_id("file.export.wisemapping", "WiseMapping (.wxml)").build(app)?)
+        .item(&MenuItemBuilder::with_id("file.export.xmind", "XMind (.xmind)").build(app)?)
+        .separator()
+        .item(&MenuItemBuilder::with_id("file.export.png", "PNG Image").build(app)?)
+        .item(&MenuItemBuilder::with_id("file.export.pdf", "PDF Document").build(app)?)
+        .build()
+}
+
 fn build_file_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Submenu<R>> {
-    let attach_accel = platform_accelerator("CmdOrCtrl+Shift+O", "F6");
     SubmenuBuilder::new(app, "File")
         .item(
             &MenuItemBuilder::with_id("file.new", "New")
@@ -69,11 +82,7 @@ fn build_file_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Resul
                 .build(app)?,
         )
         .separator()
-        .item(
-            &MenuItemBuilder::with_id("node.attachFile", "Attach File…")
-                .accelerator(attach_accel)
-                .build(app)?,
-        )
+        .item(&build_export_menu(app)?)
         .separator()
         .close_window()
         .build()
@@ -106,7 +115,21 @@ fn build_edit_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Resul
 }
 
 fn build_view_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Submenu<R>> {
+    let shortcuts_accel = platform_accelerator("CmdOrCtrl+/", "F1");
     SubmenuBuilder::new(app, "View")
+        .item(&MenuItemBuilder::with_id("view.recent", "Recent Files").build(app)?)
+        .item(&MenuItemBuilder::with_id("view.outline", "Outline").build(app)?)
+        .separator()
+        .item(&MenuItemBuilder::with_id("view.style", "Style").build(app)?)
+        .item(&MenuItemBuilder::with_id("view.canvas", "Canvas").build(app)?)
+        .separator()
+        .item(&MenuItemBuilder::with_id("view.toggleTheme", "Toggle Light/Dark").build(app)?)
+        .item(
+            &MenuItemBuilder::with_id("view.shortcuts", "Keyboard Shortcuts")
+                .accelerator(shortcuts_accel)
+                .build(app)?,
+        )
+        .separator()
         .item(&MenuItemBuilder::with_id("view.leanMode", "Lean Mode").build(app)?)
         .item(
             &MenuItemBuilder::with_id("view.colourTray", "Colour Tray")
@@ -154,11 +177,8 @@ fn build_node_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Resul
 }
 
 fn build_help_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Submenu<R>> {
-    let shortcuts_accel = platform_accelerator("CmdOrCtrl+/", "F1");
     let builder = SubmenuBuilder::new(app, "Help").item(
-        &MenuItemBuilder::with_id("find.shortcuts", "Keyboard Shortcuts")
-            .accelerator(shortcuts_accel)
-            .build(app)?,
+        &MenuItemBuilder::with_id("find.shortcuts", "Keyboard Shortcuts").build(app)?,
     );
 
     #[cfg(debug_assertions)]

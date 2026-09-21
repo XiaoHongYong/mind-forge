@@ -6,15 +6,17 @@ interface ThemePanelProps {
   initialTab?: SettingsTab;
   /** Open the What's New tab once per release. Set on one mount point only. */
   autoOpenWhatsNew?: boolean;
-  /** Render as a labelled `.mm-btn` matching the editor toolbar's own buttons, instead of the default icon-only style used in the vault lobby. */
+  /** Render as a labelled `.mm-btn` matching the editor toolbar's own buttons. */
   toolbarButton?: boolean;
+  /** Render the gear button. Off when Settings is opened only from the app menu. */
+  showButton?: boolean;
 }
 
 /**
  * Settings entry point. Renders a gear button that opens the tabbed
  * {@link SettingsModal} (Appearance / Interface / What's New / Help).
  */
-export function ThemePanel({ initialTab = 'appearance', autoOpenWhatsNew = false, toolbarButton = false }: ThemePanelProps) {
+export function ThemePanel({ initialTab = 'appearance', autoOpenWhatsNew = false, toolbarButton = false, showButton = true }: ThemePanelProps) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<SettingsTab>(initialTab);
 
@@ -48,6 +50,7 @@ export function ThemePanel({ initialTab = 'appearance', autoOpenWhatsNew = false
 
   return (
     <>
+      {showButton && (
       <button
         type="button"
         onClick={() => { setTab(initialTab); setOpen(true); }}
@@ -62,6 +65,7 @@ export function ThemePanel({ initialTab = 'appearance', autoOpenWhatsNew = false
           <path strokeLinecap="round" strokeLinejoin="round" d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
         </svg>
       </button>
+      )}
 
       <SettingsModal open={open} onClose={() => setOpen(false)} initialTab={tab} />
     </>

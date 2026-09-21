@@ -46,6 +46,8 @@ import {
 import {
   cloneTree,
   findNode,
+  findNodePath,
+  getNodeSide,
   countChecked,
   flattenTree,
   flattenAll,
@@ -226,15 +228,15 @@ function toolbarGroup(label: string, children: ReactNode, ribbonTab?: string) {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 export function DesktopMindMapEditor({
-  initialTree, initialDirty = false, initialShowShortcuts, disableAutoPanToSelection, externalNodeAttachments, title, onSave, saving, saveMsg, error, onBack,
+  initialTree, initialDirty = false, initialShowShortcuts, disableAutoPanToSelection, externalNodeAttachments, title, onSave, saving, saveMsg, error,
   exportFormats, onExport,
   versionLabel, versionTooltip,
-  onTreeChange, onSelectionChange, onNodeFileDrop, onOpenNodeAttachment,
+  onTreeChange, onSelectionChange, focusNodeRequest, onEditingTextChange, onNodeFileDrop, onOpenNodeAttachment,
   onFetchNodeAttachmentContent,
   onDeleteNodeAttachment,
   onLoadNodeAttachmentPreview,
   documentPath, linkableFiles, linkableFilesLoading, onRequestLinkableFiles, onOpenFileLink,
-  onNewDocument, onOpenDocument, onSaveAsDocument,
+  onNewDocument, onOpenDocument, onSaveAsDocument, sidePanel, onShowDocumentPanel,
   onDirtyChange,
 }: MindMapEditorProps) {
   const themeMode = useThemeStore((s) => s.mode);
@@ -245,7 +247,7 @@ export function DesktopMindMapEditor({
   const setStatusBarOverride = useUiStore((s) => s.setStatusBarOverride);
   const { statusBarVisible, toolbarLabels, buttonShortcuts: buttonShortcutsVisible, toolbarMode } = useResolvedDensity();
   const [showToolbarOverflow, setShowToolbarOverflow] = useState(false);
-  const [activeRibbonTab, setActiveRibbonTab] = useState<'home' | 'insert' | 'view' | 'export'>('home');
+  const [activeRibbonTab, setActiveRibbonTab] = useState<'home' | 'insert' | 'view'>('home');
   /** The node whose vault link is being picked, or null when the dialog is shut. */
   const [linkTargetNodeId, setLinkTargetNodeId] = useState<string | null>(null);
   const colourTrayEnabled = useUiStore((s) => s.colourTrayEnabled);
@@ -331,6 +333,7 @@ export function DesktopMindMapEditor({
   const isPanning = useRef(false);
   const lastPan = useRef({ x: 0, y: 0 });
   const skipNextAutoPan = useRef(false);
+  const appliedFocusTokenRef = useRef<number | null>(null);
 
   // ── UI toggles ─────────────────────────────────────────────────────────────
   // "Always on" wins over the host's initial hint: a card the user pinned has
@@ -373,38 +376,6 @@ export function DesktopMindMapEditor({
   const searchRef = useRef<HTMLInputElement>(null);
   const replaceRef = useRef<HTMLInputElement>(null);
   const prevSearchQuery = useRef(searchQuery);
-
-  // ── Export menu ────────────────────────────────────────────────────────────
-  const [showExportMenu, setShowExportMenu] = useState(false);
-  const exportMenuRef = useRef<HTMLDivElement>(null);
-  const [exportMenuMaxH, setExportMenuMaxH] = useState<number | null>(null);
-  const [exportMenuAlign, setExportMenuAlign] = useState<'left' | 'right'>('right');
-
-  // Where the Export button lands moves with the density — the Large ribbon
-  // puts it low and hard against the left edge, the Lean icon row high and to
-  // the right — so both the room below it and the side it can open towards
-  // have to be measured rather than guessed at in CSS.
-  useLayoutEffect(() => {
-    if (!showExportMenu) { setExportMenuMaxH(null); setExportMenuAlign('right'); return; }
-    const measure = () => {
-      const el = exportMenuRef.current;
-      const anchor = el?.parentElement;
-      if (!el || !anchor) return;
-      const MARGIN = 8;
-      setExportMenuMaxH(Math.max(120, window.innerHeight - el.getBoundingClientRect().top - 12));
-      // Right-aligned by default so it tucks under the toolbar's edge; flip to
-      // left-aligned only when that would hang the menu off the left of the
-      // window and opening rightwards actually fits.
-      const anchorRect = anchor.getBoundingClientRect();
-      const width = el.offsetWidth;
-      const overflowsLeft = anchorRect.right - width < MARGIN;
-      const rightwardsFits = anchorRect.left + width <= window.innerWidth - MARGIN;
-      setExportMenuAlign(overflowsLeft && rightwardsFits ? 'left' : 'right');
-    };
-    measure();
-    window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
-  }, [showExportMenu]);
 
   // ── Voice recording ────────────────────────────────────────────────────────
   const [mobileRecordingOpen, setMobileRecordingOpen] = useState(false);
@@ -668,8 +639,32 @@ export function DesktopMindMapEditor({
   }, [onTreeChange, root, mapStyle]);
 
   useEffect(() => {
+    onEditingTextChange?.(editingId, editText);
+  }, [onEditingTextChange, editingId, editText]);
+
+  useEffect(() => {
     onSelectionChange?.(selectedId);
   }, [onSelectionChange, selectedId]);
+
+  useEffect(() => {
+    if (!focusNodeRequest) return;
+    if (appliedFocusTokenRef.current === focusNodeRequest.token) return;
+    appliedFocusTokenRef.current = focusNodeRequest.token;
+    const path = findNodePath(root, focusNodeRequest.nodeId);
+    if (path.length === 0) return;
+    const needsExpand = path.slice(0, -1).some((node) => node.collapsed);
+    if (needsExpand) {
+      const next = cloneTree(root);
+      for (const node of findNodePath(next, focusNodeRequest.nodeId).slice(0, -1)) {
+        node.collapsed = false;
+      }
+      setRoot(next);
+    }
+    const side = getNodeSide(root, focusNodeRequest.nodeId);
+    if (side === 'left') setRootLeftCollapsed(false);
+    if (side === 'right') setRootRightCollapsed(false);
+    setSelectedId(focusNodeRequest.nodeId);
+  }, [focusNodeRequest, root]);
 
   useEffect(() => {
     attachmentPreviewUrlsRef.current = attachmentPreviewUrls;
@@ -1631,7 +1626,7 @@ export function DesktopMindMapEditor({
 
     if (e.key === 'Escape') {
       setShowShortcuts(false); setShowColorPicker(false); setShowIconPicker(false);
-      setShowExportMenu(false); setContextMenu(null); setSearchOpen(false);
+      setContextMenu(null); setSearchOpen(false);
       setMultiSelect(new Set()); setShowTagDialog(false);
       return;
     }
@@ -1716,7 +1711,6 @@ export function DesktopMindMapEditor({
       'view.zoomIn': () => { nudgeZoom(0.15); },
       'view.zoomOut': () => { nudgeZoom(-0.15); },
       'view.zoomFit': () => fitView(),
-      'nav.back': () => { onBack?.(); },
       'view.colourTray': () => {
         setColourTray(!colourTrayEnabled);
         toast('view.colourTray', colourTrayEnabled ? 'Colour tray off' : 'Colour tray on');
@@ -2222,6 +2216,32 @@ export function DesktopMindMapEditor({
         case 'file.saveAs':
           onSaveAsDocument?.();
           break;
+        case 'file.export.png':
+          void exportPng();
+          break;
+        case 'file.export.pdf':
+          exportPdf();
+          break;
+        case 'view.recent':
+          onShowDocumentPanel?.('recent');
+          break;
+        case 'view.outline':
+          onShowDocumentPanel?.('outline');
+          break;
+        case 'view.style':
+          setFormatSidebarOpen(true);
+          setFormatSidebarTab('style');
+          break;
+        case 'view.canvas':
+          setFormatSidebarOpen(true);
+          setFormatSidebarTab('canvas');
+          break;
+        case 'view.toggleTheme':
+          toggleThemeMode();
+          break;
+        case 'view.shortcuts':
+          setShowShortcuts((v) => !v);
+          break;
         case 'node.attachFile':
           nodeAttachmentInputRef.current?.click();
           break;
@@ -2279,8 +2299,15 @@ export function DesktopMindMapEditor({
         case 'view.focusMode':
           setFocusMode((v) => { if (!v) setFocusAnchorId(selectedId); return !v; });
           break;
-        default:
+        default: {
+          const exportPrefix = 'file.export.';
+          if (id.startsWith(exportPrefix)) {
+            const formatId = id.slice(exportPrefix.length);
+            const format = (exportFormats ?? []).find((entry) => entry.id === formatId);
+            if (format) void onExport?.(format, currentTreeSnapshot(), buildExportFileBaseName(title));
+          }
           break;
+        }
       }
     };
   });
@@ -2622,12 +2649,7 @@ export function DesktopMindMapEditor({
   // ══════════════════════════════════════════════════════════════════════════
 
   // Shared between the nav row (lean/standard) and the Home tab's File
-  // group (large) — see the toolbar JSX below.
-  const backBtn = onBack && (
-    <button className="mm-btn" data-label="Back" data-shortcut={formatButtonShortcut('nav.back', keyboardLayout)} onClick={onBack} title={`Back to files (${formatShortcut('nav.back', keyboardLayout)})`} style={{ flexShrink: 0 }}>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7"/></svg>
-    </button>
-  );
+  // group (large).
   const saveBtn = (
     <button
       className={`mm-btn mm-save-btn${isDirty ? ' mm-save-btn--dirty' : ''}${saving ? ' mm-save-btn--saving' : ''}${error ? ' mm-save-btn--err' : ''}${saveMsg ? ' mm-save-btn--ok' : ''}`}
@@ -2642,20 +2664,6 @@ export function DesktopMindMapEditor({
         <polyline points="17 21 17 13 7 13 7 21" />
         <polyline points="7 3 7 8 15 8" />
       </svg>
-    </button>
-  );
-  const themeBtn = (
-    <button
-      className="mm-btn"
-      data-label="Theme"
-      onClick={toggleThemeMode}
-      title={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-    >
-      {themeMode === 'dark' ? (
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-      ) : (
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-      )}
     </button>
   );
   const formatSidebarBtn = (
@@ -2710,21 +2718,18 @@ export function DesktopMindMapEditor({
       {!isMobile && <div className="mm-toolbar">
         <div className="mm-toolbar-nav">
           <div className="mm-toolbar-left">
-            {backBtn}
             {saveBtn}
           </div>
           <div className="mm-toolbar-center" aria-hidden />
           {densityPreset === 'large' && (
             <div className="mm-toolbar-nav-end">
               {formatSidebarBtn}
-              {themeBtn}
-              <ThemePanel toolbarButton />
             </div>
           )}
         </div>
         {densityPreset === 'large' && (
           <div className="mm-ribbon-tabs" role="tablist" aria-label="Toolbar tabs">
-            {([['home', 'Home'], ['insert', 'Insert'], ['view', 'View'], ['export', 'Export']] as const).map(([tab, label]) => (
+            {([['home', 'Home'], ['insert', 'Insert'], ['view', 'View']] as const).map(([tab, label]) => (
               <button
                 key={tab}
                 role="tab"
@@ -2890,36 +2895,6 @@ export function DesktopMindMapEditor({
               <button className="mm-btn" data-label="Zoom out" data-shortcut={formatButtonShortcut('view.zoomOut', keyboardLayout)} onClick={() => nudgeZoom(-0.15)} title={`Zoom out (${formatShortcut('view.zoomOut', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="11" cy="11" r="8"/><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M8 11h6"/></svg></button>
               <button className={`mm-btn${zoomFitted ? ' mm-btn--active' : ''}`} data-label={zoomFitted ? '100%' : 'Fit'} data-shortcut={zoomFitted ? undefined : formatButtonShortcut('view.zoomFit', keyboardLayout)} onClick={toggleZoomFit} title={zoomFitted ? 'Zoom to 100%' : `Fit view (${formatShortcut('view.zoomFit', keyboardLayout)})`} aria-pressed={zoomFitted}>{zoomFitted ? <span className="mm-zoom-pct">100%</span> : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5"/></svg>}</button>
             </>, 'view');
-            const outputGroup = onExport && (densityPreset !== 'large' || activeRibbonTab === 'export') && toolbarGroup('Output', (
-              <div style={{ position: 'relative' }}>
-                <button className="mm-btn" data-label="Export" onClick={() => setShowExportMenu((v) => !v)} title="Export">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-                </button>
-                {showExportMenu && (
-                  <div
-                    ref={exportMenuRef}
-                    style={{ position: 'absolute', ...(exportMenuAlign === 'left' ? { left: 0 } : { right: 0 }), top: '100%', zIndex: 300, background: 'var(--mm-node-fill, #1e293b)', border: '1px solid var(--mm-node-stroke, #334155)', borderRadius: 8, padding: '4px 0', minWidth: 150, maxHeight: exportMenuMaxH ?? undefined, overflowY: 'auto', boxShadow: '0 4px 16px rgba(0,0,0,0.4)' }}
-                    onMouseDown={(e) => e.stopPropagation()}
-                  >
-                    {(exportFormats ?? []).map((format) => (
-                      <button
-                        key={format.id}
-                        className="mm-context-item"
-                        onClick={() => { void onExport?.(format, currentTreeSnapshot(), buildExportFileBaseName(title)); setShowExportMenu(false); }}
-                      >
-                        {format.label}
-                      </button>
-                    ))}
-                    <button className="mm-context-item" onClick={() => { exportPng(); setShowExportMenu(false); }}>
-                      PNG image
-                    </button>
-                    <button className="mm-context-item" onClick={() => { exportPdf(); setShowExportMenu(false); }}>
-                      PDF document
-                    </button>
-                  </div>
-                )}
-              </div>
-            ), 'export');
 
             if (densityPreset === 'large') {
               return (
@@ -2930,36 +2905,24 @@ export function DesktopMindMapEditor({
                   {zoomGroup}
                   {activeRibbonTab === 'view' && toolbarGroup('Arrange', <>{alignBtn}{focusBtn}</>, 'view')}
                   {activeRibbonTab === 'view' && toolbarGroup('Find', <>{searchBtn}{shortcutsBtn}</>, 'view')}
-                  {outputGroup}
-                  {/* Theme and Settings live in the nav row's right-hand
-                      cluster for Large (see the toolbar-nav JSX above),
-                      not in the ribbon content. */}
+                  {/* Theme and Settings live in the app View / MindForge menus. */}
                 </>
               );
             }
             if (densityPreset === 'standard') {
-              // Fewer, broader groups than Large's tab-scoped ones —
-              // Content+Files, Arrange+Find and Theme+Settings all merge
-              // into one group apiece. "Settings" (not "Account") to match
-              // Large's own name for the same group.
+              // Fewer, broader groups than Large's tab-scoped ones.
+              // Light/dark, shortcuts, and export live in the app menus.
               return (
                 <>
                   {toolbarGroup('Insert', <>{notesBtn}{datesBtn}{tagsBtn}{linkBtn}{urlBtn}{imageBtn}{attachBtn}</>)}
                   {zoomGroup}
                   {toolbarGroup('Navigate', <>{alignBtn}{focusBtn}{formatSidebarBtn}{searchBtn}{shortcutsBtn}</>)}
-                  {outputGroup}
-                  {toolbarGroup('Settings', <>{themeBtn}<ThemePanel toolbarButton /></>)}
                 </>
               );
             }
             // Lean: same fine-grained groups as Large (not merged) — CSS
             // hides whichever ones have nothing essential in them, leaving
-            // just the essentials + the "More" overflow. Settings/ThemePanel
-            // stays out of any group here, same as before this refactor —
-            // grouping it with Theme would carry it past the empty-group
-            // check (ThemePanel's own button is itself essential) and it
-            // would show up twice, once here and once in its usual trailing
-            // spot below.
+            // just the essentials + the "More" overflow.
             return (
               <>
                 {toolbarGroup('Content', <>{notesBtn}{datesBtn}{tagsBtn}</>)}
@@ -2968,8 +2931,6 @@ export function DesktopMindMapEditor({
                 {zoomGroup}
                 {toolbarGroup('Arrange', <>{alignBtn}{focusBtn}{formatSidebarBtn}</>)}
                 {toolbarGroup('Find', <>{searchBtn}{shortcutsBtn}</>)}
-                {outputGroup}
-                {toolbarGroup('Appearance', themeBtn)}
               </>
             );
           })()}
@@ -3008,9 +2969,10 @@ export function DesktopMindMapEditor({
               )}
             </div>
           )}
-          {densityPreset === 'lean' && <ThemePanel toolbarButton />}
         </div>
       </div>}
+
+      <ThemePanel showButton={false} />
 
       {/* ── Canvas + trays (docked per Settings -> Interface) ──────────── */}
       <div className={`mm-canvas-area${hasAnyTray ? ' mm-canvas-area--trays' : ''}`}>
@@ -3025,6 +2987,7 @@ export function DesktopMindMapEditor({
           </div>
         )}
         <div className="mm-canvas-middle">
+          {sidePanel}
           {traysByPosition.left.length > 0 && (
             <div className="mm-tray-col">
               {traysByPosition.left.includes('colour') && (
@@ -3132,7 +3095,6 @@ export function DesktopMindMapEditor({
             setShowColorPicker(false);
             setContextMenu(null);
             setShowIconPicker(false);
-            setShowExportMenu(false);
             setShowToolbarOverflow(false);
             if (!shortcutsPinned) setShowShortcuts(false);
             if (formatSidebarOpen) setFormatSidebarTab('canvas');
@@ -3260,12 +3222,6 @@ export function DesktopMindMapEditor({
       {/* ── Mobile bottom bar ───────────────────────────────────────── */}
       {isMobile && (
         <div className="mm-mobile-bottombar">
-          {onBack && (
-            <button className="mm-mobile-btn" onClick={onBack} title="Back to files">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7"/></svg>
-              <span>Back</span>
-            </button>
-          )}
           <button className="mm-mobile-btn" onClick={() => addChild(selectedId)} title="Add child node">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4"/></svg>
             <span>Add</span>

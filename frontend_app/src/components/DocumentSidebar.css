@@ -1,0 +1,250 @@
+/* Left dock — Recent files / document outline */
+
+.mm-doc-side {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 auto;
+  width: 260px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--mm-toolbar-border);
+  background: var(--mm-toolbar-bg);
+  color: var(--mm-btn-text);
+}
+
+.mm-doc-side-resize {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+  z-index: 3;
+}
+
+.mm-doc-side-resize:hover,
+.mm-doc-side-resize:focus-visible,
+.mm-doc-side.is-resizing .mm-doc-side-resize {
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.mm-doc-side-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 6px 0 8px;
+  border-bottom: 1px solid var(--mm-toolbar-border);
+  flex-shrink: 0;
+}
+
+.mm-doc-side-close {
+  width: 28px;
+  height: 28px;
+  margin-bottom: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mm-btn-text);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.mm-doc-side-close:hover {
+  background: var(--mm-btn-hover);
+}
+
+.mm-doc-side-tab {
+  flex: 1;
+  height: 32px;
+  border: none;
+  background: transparent;
+  color: var(--mm-btn-text);
+  opacity: 0.65;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  border-radius: 6px 6px 0 0;
+  font-family: inherit;
+}
+
+.mm-doc-side-tab:hover {
+  opacity: 0.9;
+  background: var(--mm-btn-hover);
+}
+
+.mm-doc-side-tab.is-active {
+  opacity: 1;
+  color: var(--text-primary, var(--mm-btn-text));
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.mm-doc-side-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 0 16px;
+  scrollbar-width: thin;
+}
+
+.mm-doc-side-empty,
+.mm-doc-side-hint,
+.mm-doc-side-error {
+  margin: 8px 12px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-muted, var(--mm-btn-text));
+  opacity: 0.8;
+}
+
+.mm-doc-side-error {
+  color: #f87171;
+  opacity: 1;
+}
+
+.mm-doc-side-recent {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.mm-doc-side-recent-row {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 0 6px;
+}
+
+.mm-doc-side-recent-row:hover {
+  background: var(--mm-btn-hover);
+}
+
+.mm-doc-side-recent-open {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  padding: 7px 4px 7px 8px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.mm-doc-side-recent-open:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.mm-doc-side-recent-title,
+.mm-doc-side-recent-path {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mm-doc-side-recent-title {
+  font-size: 13px;
+  font-weight: 550;
+}
+
+.mm-doc-side-recent-path {
+  margin-top: 2px;
+  font-size: 11px;
+  opacity: 0.65;
+}
+
+.mm-doc-side-recent-remove {
+  flex-shrink: 0;
+  align-self: center;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  opacity: 0.55;
+  cursor: pointer;
+}
+
+.mm-doc-side-recent-row:hover .mm-doc-side-recent-remove,
+.mm-doc-side-recent-remove:focus-visible {
+  opacity: 0.85;
+}
+
+.mm-doc-side-recent-remove:hover {
+  background: color-mix(in srgb, var(--mm-btn-text) 12%, transparent);
+  opacity: 1;
+}
+
+.mm-doc-side-outline-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 26px;
+  margin: 0 6px;
+  border-radius: 4px;
+}
+
+.mm-doc-side-outline-row.is-selected {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.mm-doc-side-outline-chevron {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  opacity: 0.7;
+  cursor: pointer;
+  padding: 0;
+}
+
+.mm-doc-side-outline-chevron:hover {
+  background: var(--mm-btn-hover);
+  opacity: 1;
+}
+
+.mm-doc-side-outline-chevron--spacer {
+  cursor: default;
+}
+
+.mm-doc-side-outline-label {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font-size: 12.5px;
+  font-family: inherit;
+  padding: 3px 6px 3px 2px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mm-doc-side-outline-row.is-selected .mm-doc-side-outline-label {
+  font-weight: 600;
+}

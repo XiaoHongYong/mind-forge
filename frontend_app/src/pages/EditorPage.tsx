@@ -1,6 +1,6 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { DocumentTabBar } from '../components/DocumentTabBar';
+import { DocumentSidebar, type DocumentSidebarTab } from '../components/DocumentSidebar';
 import { DesktopMindMapEditor } from '../components/MindMapEditor';
 import type { LinkableFile } from '../components/MindMapFileLinkDialog';
 import { useDocumentStore, writeUnsavedBackup, restoreOrCreateNew, deleteUnsavedBackup, flushWorkspaceSave, restoreWorkspaceOnce } from '../document';
@@ -15,7 +15,6 @@ import { buildExportFileBaseName as buildExportName } from '../utils/exportFileN
 import { EXPORT_FORMATS, type ExportFormat } from '../utils/exportFormats';
 
 export function EditorPage() {
-  const navigate = useNavigate();
   const session = useDocumentStore((s) => s.session);
   const sessions = useDocumentStore((s) => s.sessions);
   const activeId = useDocumentStore((s) => s.activeId);
@@ -30,6 +29,20 @@ export function EditorPage() {
   const openViaDialog = useDocumentStore((s) => s.openViaDialog);
   const createNew = useDocumentStore((s) => s.createNew);
   const openPath = useDocumentStore((s) => s.openPath);
+  const removeRecent = useDocumentStore((s) => s.removeRecent);
+  const [sidebarTab, setSidebarTab] = useState<DocumentSidebarTab>('recent');
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [selectedNodeId, setSelectedNodeId] = useState<string>('root');
+  const [focusNodeRequest, setFocusNodeRequest] = useState<{ nodeId: string; token: number } | null>(null);
+  const [recentError, setRecentError] = useState('');
+  const [recentBusy, setRecentBusy] = useState(false);
+  const [liveEdit, setLiveEdit] = useState<{ nodeId: string; text: string } | null>(null);
+  const focusTokenRef = useRef(0);
+  const outlineSelectRef = useRef(false);
+  const selectedNodeIdRef = useRef(selectedNodeId);
+  /** First canvas selection event after each editor mount is the restored node, not a click. */
+  const selectionEpoch = useRef(0);
+  const notifiedSelectionEpoch = useRef(-1);
   const [editorKey, setEditorKey] = useState(0);
   const [title, setTitle] = useState(session?.title ?? 'Untitled');
   const [initialTree, setInitialTree] = useState<MindMapTree | null>(session?.tree ?? null);
@@ -55,6 +68,15 @@ export function EditorPage() {
   });
 
   activeIdRef.current = activeId;
+  selectedNodeIdRef.current = selectedNodeId;
+
+  const sessionId = session?.id ?? null;
+  const focusSessionRef = useRef(sessionId);
+    if (focusSessionRef.current !== sessionId) {
+    focusSessionRef.current = sessionId;
+    if (focusNodeRequest) setFocusNodeRequest(null);
+    if (liveEdit) setLiveEdit(null);
+  }
 
   const captionLabel = session?.path ? fileName(session.path) : (title || 'Untitled');
 
@@ -103,6 +125,7 @@ export function EditorPage() {
     setCurrentTree(next.tree);
     dirtyRef.current = Boolean(next.dirty);
     setEditorKey((k) => k + 1);
+    selectionEpoch.current += 1;
     setError('');
   }, []);
 
@@ -261,18 +284,54 @@ export function EditorPage() {
 
     const next = closeSession(id);
     await flushWorkspaceSave();
-    if (!next) {
-      navigate('/');
-      return;
-    }
-  }, [closeSession, commitEditorToStore, navigate]);
+    if (!next) return;
+  }, [closeSession, commitEditorToStore]);
 
-  const handleBack = useCallback(async () => {
-    commitEditorToStore();
-    await flushWorkspaceSave();
-    await flushUnsavedBackup();
-    navigate('/');
-  }, [commitEditorToStore, flushUnsavedBackup, navigate]);
+  const handleOpenRecent = useCallback(async (path: string) => {
+    setRecentBusy(true);
+    setRecentError('');
+    try {
+      commitEditorToStore();
+      await flushUnsavedBackup();
+      await openPath(path);
+    } catch (err) {
+      setRecentError(err instanceof Error ? err.message : 'Failed to open recent file');
+    } finally {
+      setRecentBusy(false);
+    }
+  }, [commitEditorToStore, flushUnsavedBackup, openPath]);
+
+  const handleSelectionChange = useCallback((nodeId: string | null) => {
+    if (!nodeId) return;
+    const fromOutline = outlineSelectRef.current;
+    outlineSelectRef.current = false;
+    const changed = selectedNodeIdRef.current !== nodeId;
+    selectedNodeIdRef.current = nodeId;
+    setSelectedNodeId(nodeId);
+    const epoch = selectionEpoch.current;
+    const firstForEpoch = notifiedSelectionEpoch.current !== epoch;
+    if (firstForEpoch) notifiedSelectionEpoch.current = epoch;
+    if (fromOutline || !changed || firstForEpoch) return;
+    setSidebarTab('outline');
+  }, []);
+
+  const showDocumentPanel = useCallback((tab: DocumentSidebarTab) => {
+    setSidebarTab(tab);
+    setSidebarOpen(true);
+  }, []);
+
+  const handleEditingTextChange = useCallback((nodeId: string | null, text: string) => {
+    setLiveEdit(nodeId ? { nodeId, text } : null);
+  }, []);
+
+  const handleOutlineSelect = useCallback((nodeId: string) => {
+    outlineSelectRef.current = nodeId !== selectedNodeIdRef.current;
+    selectedNodeIdRef.current = nodeId;
+    setSelectedNodeId(nodeId);
+    setSidebarTab('outline');
+    focusTokenRef.current += 1;
+    setFocusNodeRequest({ nodeId, token: focusTokenRef.current });
+  }, []);
 
   const handleExport = useCallback(async (format: ExportFormat, tree: MindMapTree, baseName: string) => {
     const blob = await format.serialize(tree.root, baseName);
@@ -397,37 +456,58 @@ export function EditorPage() {
         onClose={(id) => { void handleCloseTab(id); }}
         onNew={() => { void handleNew(); }}
       />
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+      <div style={{ flex: 1, minHeight: 0, minWidth: 0, display: 'flex' }}>
         <DesktopMindMapEditor
           key={editorKey}
-          documentPath={session.path}
-          linkableFiles={linkableFiles}
-          linkableFilesLoading={false}
-          onRequestLinkableFiles={() => undefined}
-          onOpenFileLink={(path) => { void handleOpenFileLink(path); }}
-          onNewDocument={() => { void handleNew(); }}
-          onOpenDocument={() => { void handleOpen(); }}
-          onSaveAsDocument={() => { void handleSaveAs(); }}
-          initialTree={initialTree}
-          initialDirty={initialDirty}
-          title={title}
-          onSave={handleSave}
-          saving={saving}
-          saveMsg={saveMsg}
-          error={error}
-          onBack={() => { void handleBack(); }}
-          onDirtyChange={handleDirtyChange}
-          exportFormats={EXPORT_FORMATS}
-          onExport={handleExport}
-          versionLabel={session.path ? fileName(session.path) : 'Untitled'}
-          versionTooltip={session.path ?? 'Not saved yet'}
-          onTreeChange={setCurrentTree}
-          onNodeFileDrop={(nodeId, files) => uploadNodeFiles(nodeId, files)}
-          onOpenNodeAttachment={(attachment) => { void handleOpenNodeAttachment(attachment); }}
-          onFetchNodeAttachmentContent={(attachment) => handleFetchNodeAttachmentContent(attachment)}
-          onDeleteNodeAttachment={(attachment) => { void handleDeleteNodeAttachment(attachment); }}
-          onLoadNodeAttachmentPreview={(attachment) => handleLoadNodeAttachmentPreview(attachment)}
-        />
+          sidePanel={sidebarOpen ? (
+            <DocumentSidebar
+              tab={sidebarTab}
+              onTabChange={setSidebarTab}
+              recent={recent}
+              recentBusy={recentBusy}
+              recentError={recentError}
+              canReopenByPath={isTauri()}
+              onOpenRecent={(path) => { void handleOpenRecent(path); }}
+              onRemoveRecent={removeRecent}
+              tree={currentTree}
+              documentId={session.id}
+              selectedNodeId={selectedNodeId}
+              editing={liveEdit}
+              onSelectNode={handleOutlineSelect}
+              onClose={() => setSidebarOpen(false)}
+            />
+          ) : null}
+          onShowDocumentPanel={showDocumentPanel}
+            documentPath={session.path}
+            linkableFiles={linkableFiles}
+            linkableFilesLoading={false}
+            onRequestLinkableFiles={() => undefined}
+            onOpenFileLink={(path) => { void handleOpenFileLink(path); }}
+            onNewDocument={() => { void handleNew(); }}
+            onOpenDocument={() => { void handleOpen(); }}
+            onSaveAsDocument={() => { void handleSaveAs(); }}
+            initialTree={initialTree}
+            initialDirty={initialDirty}
+            title={title}
+            onSave={handleSave}
+            saving={saving}
+            saveMsg={saveMsg}
+            error={error}
+            onDirtyChange={handleDirtyChange}
+            exportFormats={EXPORT_FORMATS}
+            onExport={handleExport}
+            versionLabel={session.path ? fileName(session.path) : 'Untitled'}
+            versionTooltip={session.path ?? 'Not saved yet'}
+            onTreeChange={setCurrentTree}
+            onSelectionChange={handleSelectionChange}
+            onEditingTextChange={handleEditingTextChange}
+            focusNodeRequest={focusNodeRequest}
+            onNodeFileDrop={(nodeId, files) => uploadNodeFiles(nodeId, files)}
+            onOpenNodeAttachment={(attachment) => { void handleOpenNodeAttachment(attachment); }}
+            onFetchNodeAttachmentContent={(attachment) => handleFetchNodeAttachmentContent(attachment)}
+            onDeleteNodeAttachment={(attachment) => { void handleDeleteNodeAttachment(attachment); }}
+            onLoadNodeAttachmentPreview={(attachment) => handleLoadNodeAttachmentPreview(attachment)}
+          />
       </div>
     </div>
   );

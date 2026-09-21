@@ -50,6 +50,8 @@ interface DocumentStore {
   save: (tree: MindMapTree, title: string) => Promise<DocumentSession>;
   saveAs: (tree: MindMapTree, title: string) => Promise<DocumentSession>;
   rememberPath: (path: string, title: string) => void;
+  /** Drop one path from the recent list. Does not close an open tab. */
+  removeRecent: (path: string) => void;
   clearRecent: () => void;
 }
 
@@ -242,6 +244,10 @@ export const useDocumentStore = create<DocumentStore>()(
 
       rememberPath: (path, title) => {
         set((state) => ({ recent: pushRecent(state.recent, path, title) }));
+      },
+
+      removeRecent: (path) => {
+        set((state) => ({ recent: state.recent.filter((entry) => entry.path !== path) }));
       },
 
       clearRecent: () => set({ recent: [] }),
