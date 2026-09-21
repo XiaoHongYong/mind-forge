@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from 'vitest';
+import { unzipSync, strFromU8 } from 'fflate';
 import { treeToFreeplane } from '../freeplaneExport';
 import { treeToWisemapping } from '../wisemappingExport';
 import { wisemappingToTree } from '../wisemappingImport';
@@ -36,6 +37,39 @@ describe('formats', () => {
     const back = xmindToTree(await blob.arrayBuffer(), 'Root');
     expect(back.children.map(c => c.text)).toEqual(['Alpha', 'Beta']);
     expect(back.children[0].children[0].text).toBe('A1');
+  });
+
+  it('xmind package matches the modern XMind layout XMind desktop expects', async () => {
+    const blob = treeToXmind(tree, 'Root');
+    const files = unzipSync(new Uint8Array(await blob.arrayBuffer()));
+    // Official xmind-sdk-js Zipper writes these four; missing any of them makes
+    // desktop XMind report "not a valid XMind file" / format error.
+    expect(Object.keys(files).sort()).toEqual([
+      'Thumbnails/thumbnail.png',
+      'content.json',
+      'content.xml',
+      'manifest.json',
+      'metadata.json',
+    ]);
+    expect(files['META-INF/manifest.xml']).toBeUndefined();
+
+    const sheets = JSON.parse(strFromU8(files['content.json'])) as Array<{
+      class?: string;
+      rootTopic?: { class?: string; title?: string };
+    }>;
+    expect(sheets[0]?.class).toBe('sheet');
+    expect(sheets[0]?.rootTopic?.class).toBe('topic');
+    expect(sheets[0]?.rootTopic?.title).toBe('Root');
+
+    const manifest = JSON.parse(strFromU8(files['manifest.json'])) as {
+      'file-entries': Record<string, unknown>;
+    };
+    expect(Object.keys(manifest['file-entries']).sort()).toEqual([
+      'Thumbnails/thumbnail.png',
+      'content.json',
+      'content.xml',
+      'metadata.json',
+    ]);
   });
 
   it('freeplane richcontent NODE text and BACKGROUND_COLOR', () => {
