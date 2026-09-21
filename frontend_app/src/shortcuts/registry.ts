@@ -62,7 +62,7 @@ export const SHORTCUTS: ShortcutDef[] = [
   // ── View ───────────────────────────────────────────────────────────────
   { id: 'view.root', label: 'Go to root', group: 'View', freemind: ['Home'], mac: ['H'] },
   { id: 'view.focusMode', label: 'Focus mode', group: 'View', freemind: ['F5', 'F'], mac: ['Mod+Shift+F'] },
-  { id: 'view.layoutMode', label: 'Toggle map / tree layout', group: 'View', freemind: ['Mod+Shift+M'], mac: ['Mod+Shift+M'] },
+  { id: 'view.layoutMode', label: 'Toggle structure (思维导图 / 逻辑图)', group: 'View', freemind: ['Mod+Shift+M'], mac: ['Mod+Shift+M'] },
   // FreeMind's real binding is Alt+Down/Alt+Up (no +/-); Mac follows
   // MindNode's Cmd+Plus/Cmd+Minus. Plus/- kept too on freemind since it's
   // this app's own long-standing toolbar convention.

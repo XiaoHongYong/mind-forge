@@ -186,6 +186,7 @@
   font-family: inherit;
   cursor: pointer;
 }
+.mm-fs-action:first-of-type { margin-top: 0; }
 .mm-fs-action:hover { background: var(--mm-btn-hover); }
 
 .mm-fs-toggle {
@@ -515,6 +516,106 @@
     color-mix(in srgb, var(--mm-btn-text) 22%, transparent) 4px
   );
   background-color: var(--mm-toolbar-bg);
+}
+
+.mm-fs-structure-dd {
+  position: relative;
+  width: 100%;
+}
+
+.mm-fs-structure-dd-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  padding: 0 8px 0 6px;
+  border-radius: 6px;
+  border: 1px solid var(--mm-btn-border);
+  background: var(--mm-btn-bg);
+  color: var(--mm-btn-text);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.mm-fs-structure-dd-trigger:hover { background: var(--mm-btn-hover); }
+.mm-fs-structure-dd-trigger--open {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.mm-fs-structure-dd-glyph {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  opacity: 0.9;
+}
+
+.mm-fs-structure-dd-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  opacity: 0.9;
+}
+
+.mm-fs-structure-dd-panel {
+  position: fixed;
+  z-index: 400;
+  max-height: min(280px, 50vh);
+  overflow-y: auto;
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid var(--mm-toolbar-border);
+  background: var(--mm-toolbar-bg);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  box-sizing: border-box;
+  scrollbar-width: thin;
+}
+
+.mm-fs-structure-dd-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 40px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mm-btn-text);
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.mm-fs-structure-dd-option:hover { background: var(--mm-btn-hover); }
+.mm-fs-structure-dd-option--active {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.mm-fs-structure-dd-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.mm-fs-structure-dd-option-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.mm-fs-structure-dd-option-hint {
+  font-size: 10.5px;
+  opacity: 0.55;
+  line-height: 1.2;
 }
 
 .mm-fs-zoom-row {

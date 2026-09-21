@@ -1585,7 +1585,7 @@ export function DesktopMindMapEditor({
       },
       'view.layoutMode': () => {
         toggleLayoutMode();
-        showToast(`${formatShortcut('view.layoutMode', keyboardLayout)} — ${layoutMode === 'map' ? 'Tree layout' : 'Map layout'}`);
+        showToast(`${formatShortcut('view.layoutMode', keyboardLayout)} — ${layoutMode === 'map' ? '逻辑图' : '思维导图'}`);
       },
       'find.shortcuts': () => { setShowShortcuts((v) => !v); toast('find.shortcuts', 'Shortcuts'); },
       'node.attachFile': () => {
@@ -2786,30 +2786,6 @@ export function DesktopMindMapEditor({
               </button>
             );
             const alignBtn =<button key="align" className="mm-btn" data-label="Align" data-shortcut={formatButtonShortcut('node.autoAlign', keyboardLayout)} onClick={() => autoAlignSubtree(selectedId)} title={`${selectedId === 'root' ? 'Auto-align all nodes' : 'Auto-align subtree'} (${formatShortcut('node.autoAlign', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 6h18M3 12h12M3 18h8"/></svg></button>;
-            const layoutBtn = (
-              <button
-                key="layout"
-                className={`mm-btn${layoutMode === 'map' ? ' mm-btn--active' : ''}`}
-                data-label="Map"
-                data-shortcut={formatButtonShortcut('view.layoutMode', keyboardLayout)}
-                onClick={toggleLayoutMode}
-                title={layoutMode === 'map'
-                  ? `Map layout — topics left & right. Click for tree (all right). (${formatShortcut('view.layoutMode', keyboardLayout)})`
-                  : `Tree layout — all topics on the right. Click for map (left & right). (${formatShortcut('view.layoutMode', keyboardLayout)})`}
-              >
-                {layoutMode === 'map' ? (
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                    <circle cx="12" cy="12" r="2.5" />
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9.5V5m0 14v-4.5M9.5 12H5m14 0h-4.5M8.2 8.2L5.5 5.5m13 13L15.8 15.8M15.8 8.2l2.7-2.7m-13 13l2.7-2.7" />
-                  </svg>
-                ) : (
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                    <circle cx="7" cy="12" r="2.5" />
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.5 12H14m0-5v10m0-5h3.5M17.5 7v10" />
-                  </svg>
-                )}
-              </button>
-            );
             const focusBtn = <button key="focus" className={`mm-btn${focusMode ? ' mm-btn--active' : ''}`} data-label="Focus" data-shortcut={formatButtonShortcut('view.focusMode', keyboardLayout)} onClick={() => { setFocusMode((v) => { if (!v) setFocusAnchorId(selectedId); return !v; }); }} title={`Focus mode (${formatShortcut('view.focusMode', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="3"/><path d="M12 1v2m0 18v2m8.66-17.66l-1.41 1.41M4.75 19.25l-1.41 1.41M23 12h-2M3 12H1m17.66 7.66l-1.41-1.41M4.75 4.75L3.34 3.34"/></svg></button>;
             const searchBtn = <button key="search" className="mm-btn mm-essential" data-label="Search" data-shortcut={formatButtonShortcut('find.search', keyboardLayout)} onClick={() => { setSearchOpen(true); setTimeout(() => searchRef.current?.focus(), 50); }} title={`Search (${formatShortcut('find.search', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>;
             const shortcutsBtn = <button key="shortcuts" className="mm-btn" data-label="Shortcuts" data-shortcut={formatButtonShortcut('find.shortcuts', keyboardLayout)} onClick={() => setShowShortcuts((v) => !v)} title={`Shortcuts (${formatShortcut('find.shortcuts', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg></button>;
@@ -2856,7 +2832,7 @@ export function DesktopMindMapEditor({
                   {activeRibbonTab === 'insert' && toolbarGroup('Links', <>{linkBtn}{urlBtn}</>, 'insert')}
                   {activeRibbonTab === 'insert' && toolbarGroup('Files', <>{imageBtn}{attachBtn}</>, 'insert')}
                   {zoomGroup}
-                  {activeRibbonTab === 'view' && toolbarGroup('Arrange', <>{alignBtn}{layoutBtn}{focusBtn}</>, 'view')}
+                  {activeRibbonTab === 'view' && toolbarGroup('Arrange', <>{alignBtn}{focusBtn}</>, 'view')}
                   {activeRibbonTab === 'view' && toolbarGroup('Find', <>{searchBtn}{shortcutsBtn}</>, 'view')}
                   {outputGroup}
                   {/* Theme and Settings live in the nav row's right-hand
@@ -2874,7 +2850,7 @@ export function DesktopMindMapEditor({
                 <>
                   {toolbarGroup('Insert', <>{notesBtn}{datesBtn}{tagsBtn}{linkBtn}{urlBtn}{imageBtn}{attachBtn}</>)}
                   {zoomGroup}
-                  {toolbarGroup('Navigate', <>{alignBtn}{layoutBtn}{focusBtn}{formatSidebarBtn}{searchBtn}{shortcutsBtn}</>)}
+                  {toolbarGroup('Navigate', <>{alignBtn}{focusBtn}{formatSidebarBtn}{searchBtn}{shortcutsBtn}</>)}
                   {outputGroup}
                   {toolbarGroup('Settings', <>{themeBtn}<ThemePanel toolbarButton /></>)}
                 </>
@@ -2894,7 +2870,7 @@ export function DesktopMindMapEditor({
                 {toolbarGroup('Links', <>{linkBtn}{urlBtn}</>)}
                 {toolbarGroup('Files', <>{imageBtn}{attachBtn}</>)}
                 {zoomGroup}
-                {toolbarGroup('Arrange', <>{alignBtn}{layoutBtn}{focusBtn}{formatSidebarBtn}</>)}
+                {toolbarGroup('Arrange', <>{alignBtn}{focusBtn}{formatSidebarBtn}</>)}
                 {toolbarGroup('Find', <>{searchBtn}{shortcutsBtn}</>)}
                 {outputGroup}
                 {toolbarGroup('Appearance', themeBtn)}
@@ -2919,7 +2895,6 @@ export function DesktopMindMapEditor({
                     ['view.zoomOut', 'Zoom out', () => setZoom((z) => Math.max(0.3, z - 0.15))],
                     ['view.zoomFit', 'Fit view', fitView],
                     ['node.autoAlign', 'Auto-align', () => autoAlignSubtree(selectedId)],
-                    ['view.layoutMode', 'Map / tree layout', toggleLayoutMode],
                     ['view.focusMode', 'Focus mode', () => { setFocusMode((v) => { if (!v) setFocusAnchorId(selectedId); return !v; }); }],
                     ['view.formatSidebar', 'Format panel', () => setFormatSidebarOpen(!formatSidebarOpen)],
                     ['find.shortcuts', 'Shortcuts', () => setShowShortcuts((v) => !v)],

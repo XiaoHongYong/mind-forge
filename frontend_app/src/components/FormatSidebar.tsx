@@ -1,6 +1,6 @@
 /**
  * Right-hand Format sidebar — Style (selected node) and Canvas (map) tabs.
- * MVP: fill / font size / bold / text colour + canvas bg / grid / layout / align.
+ * Style: fill / font / shape / branch; Canvas: structure / theme / defaults / view.
  */
 
 import { useCallback, useEffect, useId, useRef, useState, type JSX } from 'react';
@@ -27,7 +27,43 @@ const SHAPE_OPTIONS: { id: ShapeOptionId; label: string }[] = [
   { id: 'capsule', label: 'Capsule' },
   { id: 'ellipse', label: 'Ellipse' },
 ];
+/** Document structure — maps onto root layout mode (map ↔ mind map, tree ↔ logic). */
+const STRUCTURE_OPTIONS: { id: RootLayoutMode; label: string; hint: string }[] = [
+  { id: 'map', label: '思维导图', hint: '主题左右展开' },
+  { id: 'tree', label: '逻辑图', hint: '主题向右展开' },
+];
 const SIDEBAR_ICON_PREVIEW = CURATED_ICON_NAMES.slice(0, 24);
+
+/** Glyph for map structure types (mind map / logic chart). */
+function StructureGlyph({ kind, size = 18 }: { kind: RootLayoutMode; size?: number }): JSX.Element {
+  const stroke = 'currentColor';
+  const sw = 1.75;
+  if (kind === 'map') {
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+        <circle cx="12" cy="12" r="2.4" stroke={stroke} strokeWidth={sw} />
+        <path
+          stroke={stroke}
+          strokeWidth={sw}
+          strokeLinecap="round"
+          d="M12 9.6V5.5m0 13V14.4M9.6 12H5.5m13 0H14.4M8.4 8.4L6 6m12 12l-2.4-2.4M15.6 8.4L18 6M6 18l2.4-2.4"
+        />
+      </svg>
+    );
+  }
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <circle cx="6.5" cy="12" r="2.4" stroke={stroke} strokeWidth={sw} />
+      <path
+        stroke={stroke}
+        strokeWidth={sw}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M9 12h4.5m0-5v10m0-5H18M18 7v10"
+      />
+    </svg>
+  );
+}
 
 function isHexColor(value: string | null | undefined): value is string {
   return typeof value === 'string' && /^#[0-9a-fA-F]{6}$/.test(value);
@@ -588,6 +624,161 @@ function ThemeDropdown({
   );
 }
 
+/** Dropdown: structure type with icon + label (XMind-style). */
+function StructureDropdown({
+  current,
+  onSelect,
+}: {
+  current: RootLayoutMode;
+  onSelect: (mode: RootLayoutMode) => void;
+}): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const [panelPos, setPanelPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const listId = useId();
+  const active = STRUCTURE_OPTIONS.find((o) => o.id === current) ?? STRUCTURE_OPTIONS[0];
+
+  const close = useCallback(() => setOpen(false), []);
+
+  const updatePanelPos = useCallback(() => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const gap = 4;
+    const estimatedH = 88;
+    const spaceBelow = window.innerHeight - rect.bottom - gap;
+    const openUp = spaceBelow < estimatedH && rect.top > spaceBelow;
+    setPanelPos({
+      top: openUp ? Math.max(8, rect.top - estimatedH - gap) : rect.bottom + gap,
+      left: rect.left,
+      width: Math.max(rect.width, 200),
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!open) {
+      setPanelPos(null);
+      return;
+    }
+    updatePanelPos();
+    const onPointerDown = (e: PointerEvent) => {
+      const t = e.target as Node;
+      if (rootRef.current?.contains(t) || panelRef.current?.contains(t)) return;
+      close();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        close();
+      }
+    };
+    const onReposition = () => updatePanelPos();
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('keydown', onKey, true);
+    window.addEventListener('resize', onReposition);
+    document.addEventListener('scroll', onReposition, true);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('resize', onReposition);
+      document.removeEventListener('scroll', onReposition, true);
+    };
+  }, [open, close, updatePanelPos]);
+
+  useEffect(() => {
+    if (!open || !panelRef.current || !triggerRef.current) return;
+    const panel = panelRef.current;
+    const trigger = triggerRef.current;
+    const rect = trigger.getBoundingClientRect();
+    const gap = 4;
+    const h = panel.getBoundingClientRect().height;
+    const spaceBelow = window.innerHeight - rect.bottom - gap;
+    const openUp = spaceBelow < h && rect.top > spaceBelow;
+    setPanelPos({
+      top: openUp ? Math.max(8, rect.top - h - gap) : rect.bottom + gap,
+      left: rect.left,
+      width: Math.max(rect.width, 200),
+    });
+  }, [open]);
+
+  const pick = (mode: RootLayoutMode) => {
+    onSelect(mode);
+    close();
+  };
+
+  const toggle = () => {
+    if (open) {
+      close();
+      return;
+    }
+    const trigger = triggerRef.current;
+    if (trigger) {
+      const rect = trigger.getBoundingClientRect();
+      setPanelPos({ top: rect.bottom + 4, left: rect.left, width: Math.max(rect.width, 200) });
+    }
+    setOpen(true);
+  };
+
+  return (
+    <div className="mm-fs-structure-dd" ref={rootRef}>
+      <button
+        ref={triggerRef}
+        type="button"
+        id="mm-fs-structure"
+        className={`mm-fs-structure-dd-trigger${open ? ' mm-fs-structure-dd-trigger--open' : ''}`}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={listId}
+        aria-label={`结构: ${active.label}`}
+        onClick={toggle}
+      >
+        <span className="mm-fs-structure-dd-glyph" aria-hidden>
+          <StructureGlyph kind={current} size={18} />
+        </span>
+        <span className="mm-fs-structure-dd-value">{active.label}</span>
+        <svg className="mm-fs-color-dd-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
+        </svg>
+      </button>
+
+      {open && panelPos && (
+        <div
+          ref={panelRef}
+          className="mm-fs-structure-dd-panel"
+          id={listId}
+          role="listbox"
+          aria-label="结构"
+          style={{ top: panelPos.top, left: panelPos.left, width: panelPos.width }}
+        >
+          {STRUCTURE_OPTIONS.map((opt) => {
+            const selected = current === opt.id;
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                className={`mm-fs-structure-dd-option${selected ? ' mm-fs-structure-dd-option--active' : ''}`}
+                onClick={() => pick(opt.id)}
+              >
+                <span className="mm-fs-structure-dd-glyph" aria-hidden>
+                  <StructureGlyph kind={opt.id} size={18} />
+                </span>
+                <span className="mm-fs-structure-dd-option-text">
+                  <span className="mm-fs-structure-dd-option-label">{opt.label}</span>
+                  <span className="mm-fs-structure-dd-option-hint">{opt.hint}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export interface FormatSidebarProps {
   selectedNode: MindMapTreeNode | null;
   /** True when the selected node is a direct child of root (side control applies). */
@@ -863,7 +1054,7 @@ export function FormatSidebar({
                     </button>
                   </div>
                   {layoutMode === 'tree' && (
-                    <p className="mm-fs-hint">Choosing Left switches the map to Map layout.</p>
+                    <p className="mm-fs-hint">Choosing Left switches structure to 思维导图.</p>
                   )}
                 </section>
               )}
@@ -905,6 +1096,12 @@ export function FormatSidebar({
 
         {activeTab === 'canvas' && (
           <>
+            <section className="mm-fs-section">
+              <h3 className="mm-fs-label">结构</h3>
+              <StructureDropdown current={layoutMode} onSelect={onSetLayoutMode} />
+              <p className="mm-fs-hint">Saved with the document.</p>
+            </section>
+
             <section className="mm-fs-section">
               <h3 className="mm-fs-label">Background</h3>
               <ColorDropdown
@@ -974,23 +1171,7 @@ export function FormatSidebar({
             </section>
 
             <section className="mm-fs-section">
-              <h3 className="mm-fs-label">Layout</h3>
-              <div className="mm-fs-btn-group">
-                <button
-                  type="button"
-                  className={`mm-fs-chip${layoutMode === 'map' ? ' mm-fs-chip--active' : ''}`}
-                  onClick={() => onSetLayoutMode('map')}
-                >
-                  Map
-                </button>
-                <button
-                  type="button"
-                  className={`mm-fs-chip${layoutMode === 'tree' ? ' mm-fs-chip--active' : ''}`}
-                  onClick={() => onSetLayoutMode('tree')}
-                >
-                  Tree
-                </button>
-              </div>
+              <h3 className="mm-fs-label">View</h3>
               <button type="button" className="mm-fs-action" onClick={onAutoAlign}>
                 Auto-align {selectedNode && selectedNode.id !== 'root' ? 'subtree' : 'all'}
               </button>
