@@ -48,6 +48,14 @@ describe('matchBinding — PC', () => {
     expect(matchBinding(key({ key: 'c', metaKey: true }), 'C')).toBe(false);
   });
 
+  it('Mod+C copies a node and does not toggle the checkbox shortcut', async () => {
+    const { matchShortcut } = await loadRegistry('pc');
+    expect(matchShortcut(key({ key: 'c', ctrlKey: true }), 'freemind')).toBe('edit.copy');
+    expect(matchShortcut(key({ key: 'c' }), 'freemind')).toBe('node.checkbox');
+    expect(matchShortcut(key({ key: 'v', ctrlKey: true }), 'freemind')).toBe('edit.paste');
+    expect(matchShortcut(key({ key: 'x', ctrlKey: true }), 'freemind')).toBe('edit.cut');
+  });
+
   it('Shift+Tab is distinct from Tab', async () => {
     const { matchBinding } = await loadRegistry('pc');
     expect(matchBinding(key({ key: 'Tab', shiftKey: true }), 'Tab')).toBe(false);

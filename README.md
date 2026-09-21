@@ -171,6 +171,9 @@ resolves to ⌘ on macOS and Ctrl elsewhere. Press <kbd>F1</kbd> (FreeMind) /
 | Toggle colour tray | Ctrl+Shift+1 | ⌘⇧1 |
 | Toggle icon tray | Ctrl+Shift+2 | ⌘⇧2 |
 | **Edit** | | |
+| Copy | Ctrl+C | ⌘C |
+| Cut | Ctrl+X | ⌘X |
+| Paste | Ctrl+V | ⌘V |
 | Undo | F9 / Ctrl+Z | ⌘Z |
 | Redo | F10 / Ctrl+Y / Ctrl+Shift+Z | ⌘⇧Z |
 | **Find** | | |
@@ -180,8 +183,10 @@ resolves to ⌘ on macOS and Ctrl elsewhere. Press <kbd>F1</kbd> (FreeMind) /
 | Save | Ctrl+S | ⌘S |
 
 Source of truth: `frontend_app/src/shortcuts/registry.ts`. The native menu bar
-mirrors the unambiguous modifier-based subset; bare-letter shortcuts stay
-editor-only so they do not steal typing focus.
+mirrors the unambiguous modifier-based subset. Copy, Cut, and Paste are the
+exception: they are editor commands without a menu key equivalent, so a focused
+text field still receives the key. Bare-letter shortcuts stay editor-only so
+they do not steal typing focus.
 
 ## Validation
 

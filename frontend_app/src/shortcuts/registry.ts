@@ -76,6 +76,12 @@ export const SHORTCUTS: ShortcutDef[] = [
   { id: 'view.formatSidebar', label: 'Toggle format sidebar', group: 'View', freemind: ['Mod+Shift+3'], mac: ['Mod+Shift+3'] },
 
   // ── Edit ───────────────────────────────────────────────────────────────
+  // Copy / cut / paste are node subtrees. They are not menu key equivalents:
+  // the native Edit items only copy a text selection, which a canvas node is
+  // not, and a menu equivalent would steal the key from a focused text field.
+  { id: 'edit.copy', label: 'Copy', group: 'Edit', freemind: ['Mod+C'], mac: ['Mod+C'] },
+  { id: 'edit.cut', label: 'Cut', group: 'Edit', freemind: ['Mod+X'], mac: ['Mod+X'] },
+  { id: 'edit.paste', label: 'Paste', group: 'Edit', freemind: ['Mod+V'], mac: ['Mod+V'] },
   { id: 'edit.undo', label: 'Undo', group: 'Edit', freemind: ['F9', 'Mod+Z'], mac: ['Mod+Z'] },
   { id: 'edit.redo', label: 'Redo', group: 'Edit', freemind: ['F10', 'Mod+Y', 'Mod+Shift+Z'], mac: ['Mod+Shift+Z'] },
 

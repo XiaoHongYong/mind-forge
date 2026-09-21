@@ -101,10 +101,14 @@ fn build_edit_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Resul
                 .build(app)?,
         )
         .separator()
-        .cut()
-        .copy()
-        .paste()
-        .select_all()
+        // Not the predefined cut/copy/paste items. Those send WebKit's
+        // `copy:` / `cut:` / `paste:` selectors, which only move a text
+        // selection — canvas nodes have none, so the commands did nothing.
+        // No key equivalent either: the editor handles ⌘C/⌘X/⌘V itself, and a
+        // menu equivalent would swallow the key before a text field saw it.
+        .item(&MenuItemBuilder::with_id("edit.cut", "Cut").build(app)?)
+        .item(&MenuItemBuilder::with_id("edit.copy", "Copy").build(app)?)
+        .item(&MenuItemBuilder::with_id("edit.paste", "Paste").build(app)?)
         .separator()
         .item(
             &MenuItemBuilder::with_id("find.search", "Find")
@@ -166,11 +170,27 @@ fn build_node_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Resul
                 .accelerator(rename_accel)
                 .build(app)?,
         )
+        .separator()
+        // Toolbar Format group. No key equivalents: most of these are bare
+        // letters, and a menu accelerator would swallow the key before a
+        // text field could type it. The editor still handles the shortcuts.
+        .item(&MenuItemBuilder::with_id("node.checkbox", "Checkbox").build(app)?)
+        .item(&MenuItemBuilder::with_id("node.progress", "Progress").build(app)?)
+        .item(&MenuItemBuilder::with_id("node.colour", "Colour").build(app)?)
+        .item(&MenuItemBuilder::with_id("node.icons", "Icons").build(app)?)
+        .separator()
+        // Toolbar Insert group, in the same order as the Insert buttons.
         .item(
             &MenuItemBuilder::with_id("node.notesToggle", "Notes")
                 .accelerator(notes_accel)
                 .build(app)?,
         )
+        .item(&MenuItemBuilder::with_id("node.dates", "Dates").build(app)?)
+        .item(&MenuItemBuilder::with_id("node.labels", "Tags").build(app)?)
+        .item(&MenuItemBuilder::with_id("node.linkFile", "Link").build(app)?)
+        .item(&MenuItemBuilder::with_id("node.url", "URL").build(app)?)
+        .item(&MenuItemBuilder::with_id("node.addImage", "Image").build(app)?)
+        .item(&MenuItemBuilder::with_id("node.attachFile", "Attach").build(app)?)
         .separator()
         .item(&MenuItemBuilder::with_id("node.delete", "Delete").build(app)?)
         .build()
@@ -200,8 +220,8 @@ pub fn run() {
                     &build_app_menu(handle)?,
                     &build_file_menu(handle)?,
                     &build_edit_menu(handle)?,
-                    &build_view_menu(handle)?,
                     &build_node_menu(handle)?,
+                    &build_view_menu(handle)?,
                     &build_help_menu(handle)?,
                 ])
                 .build()?;

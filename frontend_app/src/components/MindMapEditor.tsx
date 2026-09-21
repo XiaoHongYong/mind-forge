@@ -10,7 +10,7 @@
  * • Date planning (start / end)                             D key
  * • Custom URLs per node                                    U key
  * • Move up / down siblings
- * • Duplicate node
+ * • Duplicate, copy, cut, and paste
  * • Floating find / replace                                   Ctrl+F
  * • Reset node position                                     R key
  * • All existing features preserved
@@ -111,6 +111,15 @@ import {
   subtreeIds,
   type DropIntent,
 } from './mindmap/dragSelection';
+import {
+  clipboardPlainText,
+  copyNodesToClipboard,
+  guardClipboardGesture,
+  hasNodeClipboard,
+  nodesForClipboard,
+  pasteClipboardNodes,
+  readNodeClipboard,
+} from './mindmap/nodeClipboard';
 import { panDeltaToReveal } from './mindmap/viewportPan';
 
 /** null closes the cycle: 0 → 25 → 50 → 75 → 100 → no dial → 0. */
@@ -1121,6 +1130,67 @@ export function DesktopMindMapEditor({
     return ids;
   }, [selectedId, multiSelect]);
 
+  // ── Copy / cut / paste ────────────────────────────────────────────────────
+  // Paste inserts the copied subtrees as children of the target. The root can
+  // be copied, but not cut. Plain text also goes to the system clipboard so a
+  // paste into another app still reads as an outline.
+  const copyNodeIds = useCallback((ids: Iterable<string>) => {
+    guardClipboardGesture(() => {
+      const nodes = nodesForClipboard(root, ids);
+      if (nodes.length === 0) return;
+      copyNodesToClipboard(nodes);
+      const text = clipboardPlainText(nodes);
+      if (text) void navigator.clipboard?.writeText(text).catch(() => {});
+      showToast(`${formatShortcut('edit.copy', keyboardLayout)} — Copy`);
+    });
+  }, [root, showToast, keyboardLayout]);
+
+  const cutNodeIds = useCallback((ids: Iterable<string>) => {
+    guardClipboardGesture(() => {
+      const nodes = nodesForClipboard(root, ids).filter((node) => node.id !== 'root');
+      if (nodes.length === 0) {
+        showToast("Can't cut the root");
+        return;
+      }
+      copyNodesToClipboard(nodes);
+      const text = clipboardPlainText(nodes);
+      if (text) void navigator.clipboard?.writeText(text).catch(() => {});
+      const removed = removeNodes(root, nodes.map((node) => node.id));
+      if (!removed) return;
+      setSelectedId(removed.parentId);
+      setMultiSelect(new Set());
+      mutate(removed.root);
+      showToast(`${formatShortcut('edit.cut', keyboardLayout)} — Cut`);
+    });
+  }, [root, mutate, showToast, keyboardLayout]);
+
+  const pasteNodeClipboard = useCallback((parentId: string, announceEmpty: boolean) => {
+    guardClipboardGesture(() => {
+      const clip = readNodeClipboard();
+      if (clip.length === 0) {
+        if (announceEmpty) showToast('Nothing to paste');
+        return;
+      }
+      const pasted = pasteClipboardNodes(root, parentId, clip);
+      if (!pasted) return;
+      if (parentId === 'root') {
+        const placed = pasted.ids.map((id) => findNode(pasted.root, id)?.node);
+        if (placed.some((node) => node?.side === 'left')) setRootLeftCollapsed(false);
+        if (placed.some((node) => node && node.side !== 'left')) setRootRightCollapsed(false);
+      }
+      mutate(pasted.root);
+      setSelectedId(pasted.ids[0]);
+      setMultiSelect(new Set(pasted.ids.slice(1)));
+      showToast(`${formatShortcut('edit.paste', keyboardLayout)} — Paste`);
+    });
+  }, [root, mutate, showToast, keyboardLayout]);
+
+  /** Right-click: the node under the pointer, or the whole multi-selection if it is part of one. */
+  const contextTargetIds = useCallback((nodeId: string) => {
+    if (multiSelect.has(nodeId)) return getTargetIds();
+    return new Set([nodeId]);
+  }, [multiSelect, getTargetIds]);
+
   const bulkToggleCheckbox = useCallback(() => {
     mutate(editNodes(root, getTargetIds(), (node) => { node.checked = toggleChecked(node.checked); }));
   }, [root, mutate, getTargetIds]);
@@ -1601,6 +1671,10 @@ export function DesktopMindMapEditor({
       if (e.key === 'Escape') { cancelEdit(); e.preventDefault(); }
       return;
     }
+    // A contenteditable (the notes editor) owns copy/cut/paste. notesOpen
+    // already returned above; this covers the caret when that flag lags.
+    const eventTarget = e.target as HTMLElement | null;
+    if (eventTarget?.isContentEditable || eventTarget?.closest?.('[contenteditable="true"]')) return;
     // When the icon picker or colour picker is open, only allow Escape to
     // close it - all other keys are handled by the picker so we must not navigate.
     if (showIconPicker) {
@@ -1709,6 +1783,8 @@ export function DesktopMindMapEditor({
       'node.linkFile': () => { openFileLinkPicker(selectedId); toast('node.linkFile', 'Link to a file'); },
       'edit.undo': () => { undo(); toast('edit.undo', 'Undo'); },
       'edit.redo': () => { redo(); toast('edit.redo', 'Redo'); },
+      'edit.copy': () => { copyNodeIds(getTargetIds()); },
+      'edit.cut': () => { cutNodeIds(getTargetIds()); },
       'node.fold': () => {
         hasBulk ? bulkToggleCollapse() : toggleCollapse(selectedId);
         toast('node.fold', 'Fold / Unfold');
@@ -1762,6 +1838,15 @@ export function DesktopMindMapEditor({
     if (!actionId) return;
     // Nothing to pick from when the page has not wired vault linking up.
     if (actionId === 'node.linkFile' && !onOpenFileLink) return;
+    // Paste stays on the paste event when the node clipboard is empty, so a
+    // copied picture can still land on the selected node. preventDefault here
+    // would swallow that event.
+    if (actionId === 'edit.paste') {
+      if (!hasNodeClipboard()) return;
+      e.preventDefault();
+      pasteNodeClipboard(selectedId, false);
+      return;
+    }
     const handler = actionHandlers[actionId];
     if (!handler) return;
     e.preventDefault();
@@ -1770,7 +1855,7 @@ export function DesktopMindMapEditor({
     toggleCheckbox, undo, redo, toggleCollapse, showToast, resetNodePosition, resetAllPositions, autoAlignSubtree, showIconPicker, showColorPicker, focusMode, focusedIds,
     hasBulk, bulkDelete, bulkToggleCheckbox, bulkCycleProgress, bulkToggleCollapse, bulkResetPosition, keyboardLayout,
     colourTrayEnabled, setColourTray, iconTrayEnabled, setIconTray, openFileLinkPicker, onOpenFileLink,
-    toggleLayoutMode, layoutMode, formatSidebarOpen, setFormatSidebarOpen, nudgeZoom]);
+    toggleLayoutMode, layoutMode, formatSidebarOpen, setFormatSidebarOpen, nudgeZoom, copyNodeIds, cutNodeIds, getTargetIds, pasteNodeClipboard]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -1988,25 +2073,31 @@ export function DesktopMindMapEditor({
     showToast('Image removed from node');
   }, [mutate, root, showToast]);
 
-  // Ctrl+V on the canvas puts a copied picture on the selected node. Ignored
-  // while a dialog or an inline editor owns the keyboard, where a paste means
-  // text.
+  // Ctrl+V on the canvas puts a copied picture on the selected node, or the
+  // copied nodes when the clipboard holds a subtree. Ignored while a dialog
+  // or an inline editor owns the keyboard, where a paste means text.
   useEffect(() => {
     const handler = (e: ClipboardEvent) => {
       if (notesOpen || editingId) return;
-      const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return;
       const file = Array.from(e.clipboardData?.items ?? [])
         .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
         .map((item) => item.getAsFile())
         .find((value): value is File => Boolean(value));
-      if (!file) return;
+      if (file) {
+        e.preventDefault();
+        void attachNodeImage(selectedId, file);
+        return;
+      }
+      if (!hasNodeClipboard()) return;
       e.preventDefault();
-      void attachNodeImage(selectedId, file);
+      pasteNodeClipboard(selectedId, false);
     };
     window.addEventListener('paste', handler);
     return () => window.removeEventListener('paste', handler);
-  }, [attachNodeImage, editingId, notesOpen, selectedId]);
+  }, [attachNodeImage, editingId, notesOpen, pasteNodeClipboard, selectedId]);
 
   const onDragLeaveSvg = useCallback((e: React.DragEvent<SVGSVGElement>) => {
     if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
@@ -2251,6 +2342,34 @@ export function DesktopMindMapEditor({
         case 'node.attachFile':
           nodeAttachmentInputRef.current?.click();
           break;
+        case 'node.checkbox':
+          hasBulk ? bulkToggleCheckbox() : toggleCheckbox(selectedId);
+          break;
+        case 'node.progress':
+          hasBulk ? bulkCycleProgress() : cycleProgress(selectedId);
+          break;
+        case 'node.colour':
+          setShowColorPicker((v) => !v);
+          break;
+        case 'node.icons':
+          setShowIconPicker((v) => !v);
+          break;
+        case 'node.dates':
+          setShowDateDialog((v) => !v);
+          break;
+        case 'node.labels':
+          setShowTagDialog((v) => !v);
+          break;
+        case 'node.url':
+          setShowUrlDialog((v) => !v);
+          break;
+        case 'node.addImage':
+          nodeImageTargetRef.current = selectedId;
+          nodeImageInputRef.current?.click();
+          break;
+        case 'node.linkFile':
+          if (onOpenFileLink) openFileLinkPicker(selectedId);
+          break;
         case 'node.addChild':
           addChild(selectedId);
           break;
@@ -2274,6 +2393,24 @@ export function DesktopMindMapEditor({
         case 'edit.redo':
           redo();
           break;
+        case 'edit.copy':
+        case 'edit.cut':
+        case 'edit.paste': {
+          const focus = document.activeElement as HTMLElement | null;
+          const textOwnsEdit = notesOpen || editingId != null
+            || focus?.tagName === 'INPUT'
+            || focus?.tagName === 'TEXTAREA'
+            || Boolean(focus?.isContentEditable);
+          if (textOwnsEdit) {
+            const command = id === 'edit.cut' ? 'cut' : id === 'edit.paste' ? 'paste' : 'copy';
+            document.execCommand(command);
+            break;
+          }
+          if (id === 'edit.copy') copyNodeIds(getTargetIds());
+          else if (id === 'edit.cut') cutNodeIds(getTargetIds());
+          else pasteNodeClipboard(selectedId, true);
+          break;
+        }
         case 'find.search':
           setSearchOpen(true);
           setTimeout(() => searchRef.current?.focus(), 50);
@@ -3550,6 +3687,9 @@ export function DesktopMindMapEditor({
             <div className="mm-context-divider" />
             {!cmIsRoot && cmCanMoveUp && <button className="mm-context-item" onClick={() => { moveNode(contextMenu.nodeId, 'up'); setContextMenu(null); }}>Move Up</button>}
             {!cmIsRoot && cmCanMoveDown && <button className="mm-context-item" onClick={() => { moveNode(contextMenu.nodeId, 'down'); setContextMenu(null); }}>Move Down</button>}
+            <button className="mm-context-item" data-testid="context-copy" onClick={() => { copyNodeIds(contextTargetIds(contextMenu.nodeId)); setContextMenu(null); }}>Copy <kbd>{formatShortcut('edit.copy', keyboardLayout)}</kbd></button>
+            {!cmIsRoot && <button className="mm-context-item" data-testid="context-cut" onClick={() => { cutNodeIds(contextTargetIds(contextMenu.nodeId)); setContextMenu(null); }}>Cut <kbd>{formatShortcut('edit.cut', keyboardLayout)}</kbd></button>}
+            <button className="mm-context-item" data-testid="context-paste" onClick={() => { pasteNodeClipboard(contextMenu.nodeId, true); setContextMenu(null); }}>Paste <kbd>{formatShortcut('edit.paste', keyboardLayout)}</kbd></button>
             {!cmIsRoot && <button className="mm-context-item" onClick={() => { duplicateNode(contextMenu.nodeId); setContextMenu(null); }}>Duplicate</button>}
             <button className="mm-context-item" onClick={() => { resetNodePosition(contextMenu.nodeId); setContextMenu(null); }}>Reset Position <kbd>{formatShortcut('node.resetPosition', keyboardLayout)}</kbd></button>
             <button className="mm-context-item" onClick={() => { autoAlignSubtree(contextMenu.nodeId); setContextMenu(null); }}>Auto-align subtree <kbd>{formatShortcut('node.autoAlign', keyboardLayout)}</kbd></button>
