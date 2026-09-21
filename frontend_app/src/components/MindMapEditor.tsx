@@ -111,6 +111,7 @@ import {
   subtreeIds,
   type DropIntent,
 } from './mindmap/dragSelection';
+import { panDeltaToReveal } from './mindmap/viewportPan';
 
 /** null closes the cycle: 0 → 25 → 50 → 75 → 100 → no dial → 0. */
 const PROGRESS_CYCLE: (number | null)[] = [...PROGRESS_PRESETS, null];
@@ -1495,19 +1496,10 @@ export function DesktopMindMapEditor({
       return;
     }
     const box = layout[selectedId];
-    if (!box || !containerRef.current) return;
-    const { width, height } = containerRef.current.getBoundingClientRect();
-    const margin = 60;
-    const left = pan.x + box.x * zoom;
-    const top = pan.y + box.y * zoom;
-    const right = left + box.w * zoom;
-    const bottom = top + box.h * zoom;
-    let dx = 0, dy = 0;
-    if (left < margin) dx = margin - left;
-    else if (right > width - margin) dx = (width - margin) - right;
-    if (top < 60 + margin) dy = (60 + margin) - top;
-    else if (bottom > height - margin) dy = (height - margin) - bottom;
-    if (dx !== 0 || dy !== 0) setPan({ x: pan.x + dx, y: pan.y + dy });
+    const viewport = svgRef.current?.getBoundingClientRect();
+    if (!box || !viewport) return;
+    const delta = panDeltaToReveal(box, pan, zoom, viewport);
+    if (delta.x !== 0 || delta.y !== 0) setPan({ x: pan.x + delta.x, y: pan.y + delta.y });
   }, [disableAutoPanToSelection, selectedId, layout]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Save handler ──────────────────────────────────────────────────────────
@@ -2164,14 +2156,15 @@ export function DesktopMindMapEditor({
 
   // ── Fit view ──────────────────────────────────────────────────────────────
   const fitView = useCallback(() => {
-    if (!containerRef.current || Object.keys(layout).length === 0) return;
+    const viewport = svgRef.current?.getBoundingClientRect();
+    if (!viewport || Object.keys(layout).length === 0) return;
     const all = Object.values(layout);
     const minX = Math.min(...all.map((n) => n.x));
     const maxX = Math.max(...all.map((n) => n.x + n.w));
     const minY = Math.min(...all.map((n) => n.y));
     const maxY = Math.max(...all.map((n) => n.y + n.h));
     const pad = 60;
-    const { width, height } = containerRef.current.getBoundingClientRect();
+    const { width, height } = viewport;
     const scaleX = (width - pad * 2) / (maxX - minX || 1);
     const scaleY = (height - pad * 2) / (maxY - minY || 1);
     const z = Math.min(Math.min(scaleX, scaleY), 2);
@@ -2181,7 +2174,7 @@ export function DesktopMindMapEditor({
   }, [layout]);
 
   const zoomToHundred = useCallback(() => {
-    const el = containerRef.current;
+    const el = svgRef.current;
     const z = zoom;
     if (el && z > 0) {
       const { width, height } = el.getBoundingClientRect();

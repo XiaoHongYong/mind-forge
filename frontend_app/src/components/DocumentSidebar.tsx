@@ -6,6 +6,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import { ChevronDown, ChevronRight, X } from 'lucide-react';
 import type { RecentFileEntry } from '../document/types';
+import { scrollDeltaToReveal } from './mindmap/outlineScroll';
 import { findNodePath } from './MindMapHelpers';
 import type { MindMapTree, MindMapTreeNode } from '../types';
 import './DocumentSidebar.css';
@@ -274,36 +275,31 @@ function OutlineTree({
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
-  const pendingScrollId = useRef<string | null>(null);
-  const seenSelection = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (!selectedNodeId) return;
-    const selectionChanged = seenSelection.current !== selectedNodeId;
-    if (selectionChanged) {
-      seenSelection.current = selectedNodeId;
-      pendingScrollId.current = selectedNodeId;
-    }
-    if (!selectionChanged && !pendingScrollId.current) return;
-    const ancestorIds = findNodePath(root, selectedNodeId).slice(0, -1).map((node) => node.id);
-    if (ancestorIds.length === 0) return;
-    setCollapsed((prev) => {
-      let changed = false;
-      const next = new Set(prev);
-      for (const id of ancestorIds) {
-        if (next.delete(id)) changed = true;
-      }
-      return changed ? next : prev;
-    });
-  }, [root, selectedNodeId]);
+  const revealedSelection = useRef<string | null>(null);
 
   useLayoutEffect(() => {
-    const id = pendingScrollId.current;
-    if (!id) return;
-    const row = rowRefs.current.get(id);
-    if (!row) return;
-    row.scrollIntoView({ block: 'nearest' });
-    pendingScrollId.current = null;
+    if (!selectedNodeId) return;
+    const ancestorIds = findNodePath(root, selectedNodeId).slice(0, -1).map((node) => node.id);
+    if (ancestorIds.some((id) => collapsed.has(id))) {
+      setCollapsed((prev) => {
+        let changed = false;
+        const next = new Set(prev);
+        for (const id of ancestorIds) {
+          if (next.delete(id)) changed = true;
+        }
+        return changed ? next : prev;
+      });
+      return;
+    }
+    if (revealedSelection.current === selectedNodeId) return;
+    const row = rowRefs.current.get(selectedNodeId);
+    const scroller = row?.closest('.mm-doc-side-body');
+    if (!row || !(scroller instanceof HTMLElement)) return;
+    const box = scroller.getBoundingClientRect();
+    const rowBox = row.getBoundingClientRect();
+    const delta = scrollDeltaToReveal(box.top, box.bottom, rowBox.top, rowBox.bottom);
+    if (delta !== 0) scroller.scrollTop += delta;
+    revealedSelection.current = selectedNodeId;
   }, [collapsed, root, selectedNodeId]);
 
   const toggle = (nodeId: string) => {
