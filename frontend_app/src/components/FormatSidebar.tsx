@@ -11,8 +11,6 @@ import { CURATED_ICON_NAMES } from './lucideIconRegistry';
 import {
   FONT_FAMILY_OPTIONS,
   MAP_COLOR_THEMES,
-  RAINBOW_BRANCH_COLORS,
-  RAINBOW_THEME_ID,
 } from '../utils/mapThemes';
 import './FormatSidebar.css';
 
@@ -414,6 +412,182 @@ function ColorDropdown({
   );
 }
 
+function ThemeSwatches({ colors, count = 5 }: { colors: readonly string[]; count?: number }): JSX.Element {
+  return (
+    <span className="mm-fs-theme-swatches" aria-hidden>
+      {colors.slice(0, count).map((c) => (
+        <span key={c} style={{ background: c }} />
+      ))}
+    </span>
+  );
+}
+
+/** Dropdown for document colour themes — each option shows palette swatches. */
+function ThemeDropdown({
+  currentId,
+  onSelect,
+}: {
+  currentId: string | null;
+  onSelect: (themeId: string | null) => void;
+}): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const [panelPos, setPanelPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const listId = useId();
+
+  const active = MAP_COLOR_THEMES.find((t) => t.id === currentId) ?? null;
+  const close = useCallback(() => setOpen(false), []);
+
+  const updatePanelPos = useCallback(() => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const gap = 4;
+    const estimatedH = 280;
+    const spaceBelow = window.innerHeight - rect.bottom - gap;
+    const openUp = spaceBelow < estimatedH && rect.top > spaceBelow;
+    setPanelPos({
+      top: openUp ? Math.max(8, rect.top - estimatedH - gap) : rect.bottom + gap,
+      left: rect.left,
+      width: Math.max(rect.width, 220),
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!open) {
+      setPanelPos(null);
+      return;
+    }
+    updatePanelPos();
+    const onPointerDown = (e: PointerEvent) => {
+      const t = e.target as Node;
+      if (rootRef.current?.contains(t) || panelRef.current?.contains(t)) return;
+      close();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        close();
+      }
+    };
+    const onReposition = () => updatePanelPos();
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('keydown', onKey, true);
+    window.addEventListener('resize', onReposition);
+    document.addEventListener('scroll', onReposition, true);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('resize', onReposition);
+      document.removeEventListener('scroll', onReposition, true);
+    };
+  }, [open, close, updatePanelPos]);
+
+  useEffect(() => {
+    if (!open || !panelRef.current || !triggerRef.current) return;
+    const panel = panelRef.current;
+    const trigger = triggerRef.current;
+    const rect = trigger.getBoundingClientRect();
+    const gap = 4;
+    const h = panel.getBoundingClientRect().height;
+    const spaceBelow = window.innerHeight - rect.bottom - gap;
+    const openUp = spaceBelow < h && rect.top > spaceBelow;
+    setPanelPos({
+      top: openUp ? Math.max(8, rect.top - h - gap) : rect.bottom + gap,
+      left: rect.left,
+      width: Math.max(rect.width, 220),
+    });
+  }, [open]);
+
+  const pick = (themeId: string | null) => {
+    onSelect(themeId);
+    close();
+  };
+
+  const toggle = () => {
+    if (open) {
+      close();
+      return;
+    }
+    const trigger = triggerRef.current;
+    if (trigger) {
+      const rect = trigger.getBoundingClientRect();
+      setPanelPos({ top: rect.bottom + 4, left: rect.left, width: Math.max(rect.width, 220) });
+    }
+    setOpen(true);
+  };
+
+  return (
+    <div className="mm-fs-theme-dd" ref={rootRef}>
+      <button
+        ref={triggerRef}
+        type="button"
+        id="mm-fs-color-theme"
+        className={`mm-fs-theme-dd-trigger${open ? ' mm-fs-theme-dd-trigger--open' : ''}`}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={listId}
+        aria-label="Colour theme"
+        onClick={toggle}
+      >
+        {active ? (
+          <ThemeSwatches colors={active.colors} />
+        ) : (
+          <span className="mm-fs-theme-swatches mm-fs-theme-swatches--none" aria-hidden>
+            <span />
+          </span>
+        )}
+        <span className="mm-fs-theme-dd-value">{active?.name ?? 'None'}</span>
+        <svg className="mm-fs-color-dd-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
+        </svg>
+      </button>
+
+      {open && panelPos && (
+        <div
+          ref={panelRef}
+          className="mm-fs-theme-dd-panel"
+          id={listId}
+          role="listbox"
+          aria-label="Colour theme"
+          style={{ top: panelPos.top, left: panelPos.left, width: panelPos.width }}
+        >
+          <button
+            type="button"
+            role="option"
+            aria-selected={active == null}
+            className={`mm-fs-theme-dd-option${active == null ? ' mm-fs-theme-dd-option--active' : ''}`}
+            onClick={() => pick(null)}
+          >
+            <span className="mm-fs-theme-swatches mm-fs-theme-swatches--none" aria-hidden>
+              <span />
+            </span>
+            <span>None</span>
+          </button>
+          {MAP_COLOR_THEMES.map((theme) => {
+            const selected = currentId === theme.id;
+            return (
+              <button
+                key={theme.id}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                className={`mm-fs-theme-dd-option${selected ? ' mm-fs-theme-dd-option--active' : ''}`}
+                onClick={() => pick(theme.id)}
+              >
+                <ThemeSwatches colors={theme.colors} />
+                <span>{theme.name}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export interface FormatSidebarProps {
   selectedNode: MindMapTreeNode | null;
   /** True when the selected node is a direct child of root (side control applies). */
@@ -423,7 +597,6 @@ export interface FormatSidebarProps {
   layoutMode: RootLayoutMode;
   canvasColor: string | null;
   themeMode: 'dark' | 'light';
-  canvasGridVisible: boolean;
   mapStyle: MapStyle;
   zoom: number;
   focusMode: boolean;
@@ -441,7 +614,6 @@ export interface FormatSidebarProps {
   onToggleIcon: (iconName: string | null) => void;
   onOpenIconTray: () => void;
   onSetCanvasColor: (color: string | null) => void;
-  onSetCanvasGridVisible: (visible: boolean) => void;
   onSetLayoutMode: (mode: RootLayoutMode) => void;
   onAutoAlign: () => void;
   onSetColorTheme: (themeId: string | null) => void;
@@ -462,7 +634,6 @@ export function FormatSidebar({
   layoutMode,
   canvasColor,
   themeMode,
-  canvasGridVisible,
   mapStyle,
   zoom,
   focusMode,
@@ -480,7 +651,6 @@ export function FormatSidebar({
   onToggleIcon,
   onOpenIconTray,
   onSetCanvasColor,
-  onSetCanvasGridVisible,
   onSetLayoutMode,
   onAutoAlign,
   onSetColorTheme,
@@ -751,63 +921,14 @@ export function FormatSidebar({
             </section>
 
             <section className="mm-fs-section">
-              <h3 className="mm-fs-label">Grid</h3>
-              <label className="mm-fs-toggle">
-                <input
-                  type="checkbox"
-                  checked={canvasGridVisible}
-                  onChange={(e) => onSetCanvasGridVisible(e.target.checked)}
-                />
-                <span>Show dot grid</span>
-              </label>
-            </section>
-
-            <section className="mm-fs-section">
               <h3 className="mm-fs-label">Colour theme</h3>
-              <p className="mm-fs-hint" style={{ marginBottom: 8 }}>
-                Colours branches by index; deeper nodes fade. Nodes with their own fill keep it.
-              </p>
-              <div className="mm-fs-theme-list">
-                {MAP_COLOR_THEMES.map((theme) => {
-                  const active = activeThemeId === theme.id;
-                  return (
-                    <button
-                      key={theme.id}
-                      type="button"
-                      className={`mm-fs-theme-btn${active ? ' mm-fs-theme-btn--active' : ''}`}
-                      title={active ? `Clear ${theme.name}` : `Apply ${theme.name}`}
-                      aria-pressed={active}
-                      onClick={() => onSetColorTheme(active ? null : theme.id)}
-                    >
-                      <span className="mm-fs-theme-swatches" aria-hidden>
-                        {theme.colors.slice(0, 5).map((c) => (
-                          <span key={c} style={{ background: c }} />
-                        ))}
-                      </span>
-                      <span>{theme.name}</span>
-                    </button>
-                  );
-                })}
-                {(() => {
-                  const active = activeThemeId === RAINBOW_THEME_ID;
-                  return (
-                    <button
-                      type="button"
-                      className={`mm-fs-theme-btn${active ? ' mm-fs-theme-btn--active' : ''}`}
-                      title={active ? 'Clear Rainbow' : 'Rainbow branches'}
-                      aria-pressed={active}
-                      onClick={() => onSetColorTheme(active ? null : RAINBOW_THEME_ID)}
-                    >
-                      <span className="mm-fs-theme-swatches" aria-hidden>
-                        {RAINBOW_BRANCH_COLORS.slice(0, 5).map((c) => (
-                          <span key={c} style={{ background: c }} />
-                        ))}
-                      </span>
-                      <span>Rainbow</span>
-                    </button>
-                  );
-                })()}
+              <div className="mm-fs-row">
+                <span className="mm-fs-field-label">Theme</span>
+                <ThemeDropdown currentId={activeThemeId} onSelect={onSetColorTheme} />
               </div>
+              <p className="mm-fs-hint">
+                Colours level-1 branches by index; deeper nodes fade. Explicit node fills win.
+              </p>
             </section>
 
             <section className="mm-fs-section">

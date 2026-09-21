@@ -421,19 +421,19 @@
 }
 .mm-fs-icon-btn--clear svg { width: 12px; height: 12px; }
 
-.mm-fs-theme-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+.mm-fs-theme-dd {
+  position: relative;
+  flex: 1;
+  min-width: 0;
 }
 
-.mm-fs-theme-btn {
+.mm-fs-theme-dd-trigger {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
   height: 32px;
-  padding: 0 8px;
+  padding: 0 8px 0 6px;
   border-radius: 6px;
   border: 1px solid var(--mm-btn-border);
   background: var(--mm-btn-bg);
@@ -443,10 +443,55 @@
   cursor: pointer;
   text-align: left;
 }
-.mm-fs-theme-btn:hover { background: var(--mm-btn-hover); }
-.mm-fs-theme-btn--active {
+.mm-fs-theme-dd-trigger:hover { background: var(--mm-btn-hover); }
+.mm-fs-theme-dd-trigger--open {
   border-color: var(--accent);
-  box-shadow: inset 0 0 0 1px var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.mm-fs-theme-dd-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  opacity: 0.9;
+}
+
+.mm-fs-theme-dd-panel {
+  position: fixed;
+  z-index: 400;
+  max-height: min(320px, 50vh);
+  overflow-y: auto;
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid var(--mm-toolbar-border);
+  background: var(--mm-toolbar-bg);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  box-sizing: border-box;
+  scrollbar-width: thin;
+}
+
+.mm-fs-theme-dd-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mm-btn-text);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.mm-fs-theme-dd-option:hover { background: var(--mm-btn-hover); }
+.mm-fs-theme-dd-option--active {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .mm-fs-theme-swatches {
@@ -459,6 +504,17 @@
   height: 10px;
   border-radius: 2px;
   border: 1px solid rgba(0, 0, 0, 0.12);
+}
+.mm-fs-theme-swatches--none span {
+  width: 40px;
+  background: repeating-linear-gradient(
+    -45deg,
+    transparent,
+    transparent 2px,
+    color-mix(in srgb, var(--mm-btn-text) 22%, transparent) 2px,
+    color-mix(in srgb, var(--mm-btn-text) 22%, transparent) 4px
+  );
+  background-color: var(--mm-toolbar-bg);
 }
 
 .mm-fs-zoom-row {

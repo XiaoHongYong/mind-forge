@@ -12,7 +12,7 @@ export interface MapColorTheme {
   colors: readonly string[];
 }
 
-/** Built-in id for the rainbow palette (not listed in MAP_COLOR_THEMES). */
+/** Built-in id for the rainbow palette. */
 export const RAINBOW_THEME_ID = 'rainbow';
 
 /** Rainbow palette used by "Rainbow branches". */
@@ -21,6 +21,11 @@ export const RAINBOW_BRANCH_COLORS: readonly string[] = [
 ];
 
 export const MAP_COLOR_THEMES: readonly MapColorTheme[] = [
+  {
+    id: RAINBOW_THEME_ID,
+    name: 'Rainbow',
+    colors: RAINBOW_BRANCH_COLORS,
+  },
   {
     id: 'ocean',
     name: 'Ocean',
@@ -46,6 +51,46 @@ export const MAP_COLOR_THEMES: readonly MapColorTheme[] = [
     name: 'Slate',
     colors: ['#475569', '#64748b', '#334155', '#78716c', '#57534e', '#52525b'],
   },
+  {
+    id: 'coral',
+    name: 'Coral',
+    colors: ['#f43f5e', '#fb7185', '#f97316', '#ea580c', '#e11d48', '#be123c'],
+  },
+  {
+    id: 'aurora',
+    name: 'Aurora',
+    colors: ['#22d3ee', '#34d399', '#a78bfa', '#60a5fa', '#2dd4bf', '#818cf8'],
+  },
+  {
+    id: 'earth',
+    name: 'Earth',
+    colors: ['#a16207', '#b45309', '#92400e', '#78716c', '#a8a29e', '#78350f'],
+  },
+  {
+    id: 'candy',
+    name: 'Candy',
+    colors: ['#f472b6', '#fb7185', '#c084fc', '#67e8f9', '#fde047', '#86efac'],
+  },
+  {
+    id: 'nord',
+    name: 'Nord',
+    colors: ['#5e81ac', '#81a1c1', '#88c0d0', '#8fbcbb', '#4c566a', '#b48ead'],
+  },
+  {
+    id: 'citrus',
+    name: 'Citrus',
+    colors: ['#eab308', '#84cc16', '#f59e0b', '#65a30d', '#f97316', '#ca8a04'],
+  },
+  {
+    id: 'ink',
+    name: 'Ink',
+    colors: ['#1e3a5f', '#0f766e', '#7c2d12', '#4c1d95', '#1e293b', '#334155'],
+  },
+  {
+    id: 'pastel',
+    name: 'Pastel',
+    colors: ['#93c5fd', '#86efac', '#fcd34d', '#f9a8d4', '#c4b5fd', '#67e8f9'],
+  },
 ];
 
 export const FONT_FAMILY_OPTIONS: readonly { id: string; label: string; value: string }[] = [
@@ -58,7 +103,6 @@ export const FONT_FAMILY_OPTIONS: readonly { id: string; label: string; value: s
 /** Resolve a stored theme id to its palette, or null when unset / unknown. */
 export function getThemeColors(themeId: string | null | undefined): readonly string[] | null {
   if (!themeId) return null;
-  if (themeId === RAINBOW_THEME_ID) return RAINBOW_BRANCH_COLORS;
   return MAP_COLOR_THEMES.find((t) => t.id === themeId)?.colors ?? null;
 }
 

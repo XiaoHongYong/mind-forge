@@ -523,15 +523,21 @@ function CollapseBubble({
   x,
   y,
   label,
+  collapsed,
   onToggle,
 }: {
   x: number;
   y: number;
   label: string;
+  collapsed: boolean;
   onToggle: () => void;
 }): JSX.Element {
   return (
-    <g className="mm-collapse-btn" transform={`translate(${x}, ${y})`} onClick={(e) => { e.stopPropagation(); onToggle(); }}>
+    <g
+      className={`mm-collapse-btn${collapsed ? ' mm-collapse-btn--collapsed' : ''}`}
+      transform={`translate(${x}, ${y})`}
+      onClick={(e) => { e.stopPropagation(); onToggle(); }}
+    >
       <circle r={8} fill="var(--mm-collapse-fill)" stroke="var(--mm-collapse-stroke)" strokeWidth={1.5} />
       <text textAnchor="middle" dominantBaseline="middle" fontSize={11} fill="var(--mm-collapse-text)" fontWeight="bold" y={0.5}>
         {label}
@@ -574,6 +580,7 @@ export function CollapseControls({
         x={box.direction === 'left' ? leftX : rightX}
         y={centreY}
         label={node.collapsed ? `+${node.children.length}` : '−'}
+        collapsed={!!node.collapsed}
         onToggle={() => onToggleCollapse(node.id)}
       />
     );
@@ -588,6 +595,7 @@ export function CollapseControls({
           x={leftX}
           y={centreY}
           label={rootLeftCollapsed ? `+${leftChildren.length}` : '−'}
+          collapsed={rootLeftCollapsed}
           onToggle={onToggleRootLeft}
         />
       )}
@@ -596,6 +604,7 @@ export function CollapseControls({
           x={rightX}
           y={centreY}
           label={rootRightCollapsed ? `+${rightChildren.length}` : '−'}
+          collapsed={rootRightCollapsed}
           onToggle={onToggleRootRight}
         />
       )}

@@ -28,3 +28,6 @@ rfd = { version = "0.16", default-features = false }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+
+[profile.dev]
+debug = 1

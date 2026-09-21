@@ -1290,6 +1290,14 @@
   pointer-events: none;
 }
 
+.mm-collapse-btn {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.mm-node-group:hover .mm-collapse-btn,
+.mm-collapse-btn--collapsed {
+  opacity: 1;
+}
 .mm-collapse-btn circle {
   transition: fill 0.1s;
 }

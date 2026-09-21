@@ -235,7 +235,6 @@ export function DesktopMindMapEditor({
   const formatSidebarOpen = useUiStore((s) => s.formatSidebarOpen);
   const setFormatSidebarOpen = useUiStore((s) => s.setFormatSidebarOpen);
   const canvasGridVisible = useUiStore((s) => s.canvasGridVisible);
-  const setCanvasGridVisible = useUiStore((s) => s.setCanvasGridVisible);
   const canvasColor = useThemeStore((s) => s.canvasColor);
   const setCanvasColor = useThemeStore((s) => s.setCanvasColor);
   const [formatSidebarTab, setFormatSidebarTab] = useState<FormatSidebarTab>('style');
@@ -3066,7 +3065,6 @@ export function DesktopMindMapEditor({
               layoutMode={layoutMode}
               canvasColor={canvasColor}
               themeMode={themeMode}
-              canvasGridVisible={canvasGridVisible}
               mapStyle={mapStyle}
               zoom={zoom}
               focusMode={focusMode}
@@ -3084,7 +3082,6 @@ export function DesktopMindMapEditor({
               onToggleIcon={(n) => { hasBulk ? bulkSetIcon(n) : setNodeIcon(selectedId, n); }}
               onOpenIconTray={() => setIconTray(true)}
               onSetCanvasColor={setCanvasColor}
-              onSetCanvasGridVisible={setCanvasGridVisible}
               onSetLayoutMode={setRootLayoutMode}
               onAutoAlign={() => autoAlignSubtree(selectedId)}
               onSetColorTheme={setColorTheme}
