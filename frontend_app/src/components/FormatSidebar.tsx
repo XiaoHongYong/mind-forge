@@ -4,6 +4,7 @@
  */
 
 import { useCallback, useEffect, useId, useRef, useState, type JSX } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { MapStyle, MindMapTreeNode, NodeShape } from '../types';
 import { CANVAS_COLOR_PRESETS, COLOR_PALETTE, NODE_BASE_FONT_SIZE } from './MindMapConstants';
 import { DynamicLucideIcon } from './DynamicLucideIcon';
@@ -20,18 +21,7 @@ export type RootLayoutMode = 'tree' | 'map';
 const FONT_SIZE_OPTIONS = [10, 12, 13, 14, 16, 18, 20, 24] as const;
 const EDGE_WIDTH_OPTIONS = [1, 1.5, 2, 2.5, 3, 4] as const;
 type ShapeOptionId = NodeShape | 'auto';
-const SHAPE_OPTIONS: { id: ShapeOptionId; label: string }[] = [
-  { id: 'auto', label: 'Auto' },
-  { id: 'rounded', label: 'Rounded' },
-  { id: 'rect', label: 'Rectangle' },
-  { id: 'capsule', label: 'Capsule' },
-  { id: 'ellipse', label: 'Ellipse' },
-];
-/** Document structure — maps onto root layout mode (map ↔ mind map, tree ↔ logic). */
-const STRUCTURE_OPTIONS: { id: RootLayoutMode; label: string; hint: string }[] = [
-  { id: 'map', label: '思维导图', hint: '主题左右展开' },
-  { id: 'tree', label: '逻辑图', hint: '主题向右展开' },
-];
+const SHAPE_OPTION_IDS: ShapeOptionId[] = ['auto', 'rounded', 'rect', 'capsule', 'ellipse'];
 const SIDEBAR_ICON_PREVIEW = CURATED_ICON_NAMES.slice(0, 24);
 
 /** Glyph for map structure types (mind map / logic chart). */
@@ -117,13 +107,24 @@ function ShapeDropdown({
   current: ShapeOptionId;
   onSelect: (shape: NodeShape | null) => void;
 }): JSX.Element {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [panelPos, setPanelPos] = useState<{ top: number; left: number; width: number } | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const listId = useId();
-  const currentLabel = SHAPE_OPTIONS.find((o) => o.id === current)?.label ?? 'Auto';
+
+  const shapeLabel = (id: ShapeOptionId): string => {
+    if (id === 'auto') return t('format.shapeAuto', { defaultValue: 'Auto' });
+    if (id === 'rounded') return t('format.shapeRounded', { defaultValue: 'Rounded' });
+    if (id === 'rect') return t('format.shapeRectangle', { defaultValue: 'Rectangle' });
+    if (id === 'capsule') return t('format.shapeCapsule', { defaultValue: 'Capsule' });
+    return t('format.shapeEllipse', { defaultValue: 'Ellipse' });
+  };
+
+  const currentLabel = shapeLabel(current);
+  const shapeAria = t('format.shape', { defaultValue: 'Shape' });
 
   const close = useCallback(() => setOpen(false), []);
 
@@ -149,8 +150,8 @@ function ShapeDropdown({
     }
     updatePanelPos();
     const onPointerDown = (e: PointerEvent) => {
-      const t = e.target as Node;
-      if (rootRef.current?.contains(t) || panelRef.current?.contains(t)) return;
+      const tNode = e.target as Node;
+      if (rootRef.current?.contains(tNode) || panelRef.current?.contains(tNode)) return;
       close();
     };
     const onKey = (e: KeyboardEvent) => {
@@ -215,7 +216,7 @@ function ShapeDropdown({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={listId}
-        aria-label={`Shape: ${currentLabel}`}
+        aria-label={`${shapeAria}: ${currentLabel}`}
         title={currentLabel}
         onClick={toggle}
       >
@@ -233,24 +234,27 @@ function ShapeDropdown({
           className="mm-fs-color-dd-panel mm-fs-shape-dd-panel"
           id={listId}
           role="listbox"
-          aria-label="Shape"
+          aria-label={shapeAria}
           style={{ top: panelPos.top, left: panelPos.left, width: panelPos.width }}
         >
           <div className="mm-fs-shape-dd-options">
-            {SHAPE_OPTIONS.map((opt) => (
-              <button
-                key={opt.id}
-                type="button"
-                role="option"
-                aria-selected={current === opt.id}
-                aria-label={opt.label}
-                title={opt.label}
-                className={`mm-fs-shape-opt${current === opt.id ? ' mm-fs-shape-opt--active' : ''}`}
-                onClick={() => pick(opt.id)}
-              >
-                <ShapeGlyph kind={opt.id} size={22} />
-              </button>
-            ))}
+            {SHAPE_OPTION_IDS.map((id) => {
+              const label = shapeLabel(id);
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  role="option"
+                  aria-selected={current === id}
+                  aria-label={label}
+                  title={label}
+                  className={`mm-fs-shape-opt${current === id ? ' mm-fs-shape-opt--active' : ''}`}
+                  onClick={() => pick(id)}
+                >
+                  <ShapeGlyph kind={id} size={22} />
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
@@ -264,9 +268,9 @@ function ColorDropdown({
   current,
   onSelect,
   allowClear,
-  clearLabel = 'Default',
+  clearLabel,
   presets = COLOR_PALETTE,
-  placeholderLabel = 'Default',
+  placeholderLabel,
   placeholderSwatch,
 }: {
   label: string;
@@ -279,12 +283,17 @@ function ColorDropdown({
   /** Shown on the trigger when `current` is null (e.g. theme canvas default). */
   placeholderSwatch?: string;
 }): JSX.Element {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [panelPos, setPanelPos] = useState<{ top: number; left: number; width: number } | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const listId = useId();
+
+  const resolvedClear = clearLabel ?? t('format.default', { defaultValue: 'Default' });
+  const resolvedPlaceholder = placeholderLabel ?? t('format.default', { defaultValue: 'Default' });
+  const customTitle = t('format.customColour', { defaultValue: 'Custom colour' });
 
   const close = useCallback(() => setOpen(false), []);
 
@@ -310,8 +319,8 @@ function ColorDropdown({
     }
     updatePanelPos();
     const onPointerDown = (e: PointerEvent) => {
-      const t = e.target as Node;
-      if (rootRef.current?.contains(t) || panelRef.current?.contains(t)) return;
+      const tNode = e.target as Node;
+      if (rootRef.current?.contains(tNode) || panelRef.current?.contains(tNode)) return;
       close();
     };
     const onKey = (e: KeyboardEvent) => {
@@ -351,7 +360,7 @@ function ColorDropdown({
     });
   }, [open]);
 
-  const displayLabel = current ?? placeholderLabel;
+  const displayLabel = current ?? resolvedPlaceholder;
   const triggerSwatch = current ?? placeholderSwatch ?? null;
 
   const pick = (color: string | null) => {
@@ -415,7 +424,7 @@ function ColorDropdown({
                 role="option"
                 aria-selected={current == null}
                 className={`mm-fs-swatch mm-fs-swatch--clear${current == null ? ' mm-fs-swatch--active' : ''}`}
-                title={clearLabel}
+                title={resolvedClear}
                 onClick={() => pick(null)}
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><line x1="4" y1="4" x2="20" y2="20" /></svg>
@@ -433,12 +442,12 @@ function ColorDropdown({
                 onClick={() => pick(c)}
               />
             ))}
-            <label className="mm-fs-swatch mm-fs-swatch--custom" title="Custom colour">
+            <label className="mm-fs-swatch mm-fs-swatch--custom" title={customTitle}>
               <input
                 type="color"
                 value={isHexColor(current) ? current : (placeholderSwatch && isHexColor(placeholderSwatch) ? placeholderSwatch : '#6366f1')}
                 onChange={(e) => pick(e.target.value)}
-                aria-label={`${label} custom colour`}
+                aria-label={t('format.customColourAria', { defaultValue: '{{label}} custom colour', label })}
               />
             </label>
           </div>
@@ -466,6 +475,7 @@ function ThemeDropdown({
   currentId: string | null;
   onSelect: (themeId: string | null) => void;
 }): JSX.Element {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [panelPos, setPanelPos] = useState<{ top: number; left: number; width: number } | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -473,7 +483,9 @@ function ThemeDropdown({
   const panelRef = useRef<HTMLDivElement>(null);
   const listId = useId();
 
-  const active = MAP_COLOR_THEMES.find((t) => t.id === currentId) ?? null;
+  const noneLabel = t('format.colourThemeNone', { defaultValue: 'None' });
+  const themeAria = t('format.colourTheme', { defaultValue: 'Colour theme' });
+  const active = MAP_COLOR_THEMES.find((theme) => theme.id === currentId) ?? null;
   const close = useCallback(() => setOpen(false), []);
 
   const updatePanelPos = useCallback(() => {
@@ -498,8 +510,8 @@ function ThemeDropdown({
     }
     updatePanelPos();
     const onPointerDown = (e: PointerEvent) => {
-      const t = e.target as Node;
-      if (rootRef.current?.contains(t) || panelRef.current?.contains(t)) return;
+      const tNode = e.target as Node;
+      if (rootRef.current?.contains(tNode) || panelRef.current?.contains(tNode)) return;
       close();
     };
     const onKey = (e: KeyboardEvent) => {
@@ -565,7 +577,7 @@ function ThemeDropdown({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={listId}
-        aria-label="Colour theme"
+        aria-label={themeAria}
         onClick={toggle}
       >
         {active ? (
@@ -575,7 +587,7 @@ function ThemeDropdown({
             <span />
           </span>
         )}
-        <span className="mm-fs-theme-dd-value">{active?.name ?? 'None'}</span>
+        <span className="mm-fs-theme-dd-value">{active?.name ?? noneLabel}</span>
         <svg className="mm-fs-color-dd-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
           <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
         </svg>
@@ -587,7 +599,7 @@ function ThemeDropdown({
           className="mm-fs-theme-dd-panel"
           id={listId}
           role="listbox"
-          aria-label="Colour theme"
+          aria-label={themeAria}
           style={{ top: panelPos.top, left: panelPos.left, width: panelPos.width }}
         >
           <button
@@ -600,7 +612,7 @@ function ThemeDropdown({
             <span className="mm-fs-theme-swatches mm-fs-theme-swatches--none" aria-hidden>
               <span />
             </span>
-            <span>None</span>
+            <span>{noneLabel}</span>
           </button>
           {MAP_COLOR_THEMES.map((theme) => {
             const selected = currentId === theme.id;
@@ -632,13 +644,28 @@ function StructureDropdown({
   current: RootLayoutMode;
   onSelect: (mode: RootLayoutMode) => void;
 }): JSX.Element {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [panelPos, setPanelPos] = useState<{ top: number; left: number; width: number } | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const listId = useId();
-  const active = STRUCTURE_OPTIONS.find((o) => o.id === current) ?? STRUCTURE_OPTIONS[0];
+
+  const structureOptions: { id: RootLayoutMode; label: string; hint: string }[] = [
+    {
+      id: 'map',
+      label: t('format.structureMap', { defaultValue: 'Mind map' }),
+      hint: t('format.structureMapHint', { defaultValue: 'Branches left and right' }),
+    },
+    {
+      id: 'tree',
+      label: t('format.structureTree', { defaultValue: 'Logic chart' }),
+      hint: t('format.structureTreeHint', { defaultValue: 'Branches to the right' }),
+    },
+  ];
+  const structureAria = t('format.structure', { defaultValue: 'Structure' });
+  const active = structureOptions.find((o) => o.id === current) ?? structureOptions[0];
 
   const close = useCallback(() => setOpen(false), []);
 
@@ -664,8 +691,8 @@ function StructureDropdown({
     }
     updatePanelPos();
     const onPointerDown = (e: PointerEvent) => {
-      const t = e.target as Node;
-      if (rootRef.current?.contains(t) || panelRef.current?.contains(t)) return;
+      const tNode = e.target as Node;
+      if (rootRef.current?.contains(tNode) || panelRef.current?.contains(tNode)) return;
       close();
     };
     const onKey = (e: KeyboardEvent) => {
@@ -731,7 +758,7 @@ function StructureDropdown({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={listId}
-        aria-label={`结构: ${active.label}`}
+        aria-label={`${structureAria}: ${active.label}`}
         onClick={toggle}
       >
         <span className="mm-fs-structure-dd-glyph" aria-hidden>
@@ -749,10 +776,10 @@ function StructureDropdown({
           className="mm-fs-structure-dd-panel"
           id={listId}
           role="listbox"
-          aria-label="结构"
+          aria-label={structureAria}
           style={{ top: panelPos.top, left: panelPos.left, width: panelPos.width }}
         >
-          {STRUCTURE_OPTIONS.map((opt) => {
+          {structureOptions.map((opt) => {
             const selected = current === opt.id;
             return (
               <button
@@ -853,6 +880,7 @@ export function FormatSidebar({
   onZoomFit,
   onClose,
 }: FormatSidebarProps): JSX.Element {
+  const { t } = useTranslation();
   const activeThemeId = mapStyle.colorThemeId ?? null;
   const docBase = mapStyle.defaultFontSize ?? NODE_BASE_FONT_SIZE;
   const effectiveFontSize = selectedNode?.fontSize ?? docBase;
@@ -864,9 +892,13 @@ export function FormatSidebar({
   const themeCanvasDefault = themeMode === 'dark' ? '#0f172a' : '#f1f5f9';
   const shapeValue: NodeShape | 'auto' = selectedNode?.shape ?? 'auto';
   const zoomPct = Math.round(zoom * 100);
+  const defaultLabel = t('format.default', { defaultValue: 'Default' });
+  const autoLabel = t('format.auto', { defaultValue: 'Auto' });
+  const matchThemeLabel = t('format.matchTheme', { defaultValue: 'Match theme' });
+  const closePanel = t('format.closePanel', { defaultValue: 'Close format panel' });
 
   return (
-    <aside className="mm-format-sidebar" aria-label="Format">
+    <aside className="mm-format-sidebar" aria-label={t('format.panel', { defaultValue: 'Format' })}>
       <div className="mm-fs-header">
         <div className="mm-fs-tabs" role="tablist">
           <button
@@ -876,7 +908,7 @@ export function FormatSidebar({
             className={`mm-fs-tab${activeTab === 'style' ? ' mm-fs-tab--active' : ''}`}
             onClick={() => onActiveTabChange('style')}
           >
-            Style
+            {t('format.style', { defaultValue: 'Style' })}
           </button>
           <button
             type="button"
@@ -885,10 +917,10 @@ export function FormatSidebar({
             className={`mm-fs-tab${activeTab === 'canvas' ? ' mm-fs-tab--active' : ''}`}
             onClick={() => onActiveTabChange('canvas')}
           >
-            Canvas
+            {t('format.canvas', { defaultValue: 'Canvas' })}
           </button>
         </div>
-        <button type="button" className="mm-fs-close" onClick={onClose} title="Close format panel" aria-label="Close format panel">
+        <button type="button" className="mm-fs-close" onClick={onClose} title={closePanel} aria-label={closePanel}>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       </div>
@@ -898,12 +930,13 @@ export function FormatSidebar({
           selectedNode ? (
             <>
               <p className="mm-fs-hint mm-fs-hint--top">
-                Colour / Icon trays stay available for quick edits
-                {colourTrayEnabled || iconTrayEnabled ? ' (currently docked).' : '.'}
+                {colourTrayEnabled || iconTrayEnabled
+                  ? t('format.traysHintDocked', { defaultValue: 'Colour / Icon trays stay available for quick edits (currently docked).' })
+                  : t('format.traysHint', { defaultValue: 'Colour / Icon trays stay available for quick edits.' })}
               </p>
 
               <section className="mm-fs-section">
-                <h3 className="mm-fs-label">Shape</h3>
+                <h3 className="mm-fs-label">{t('format.shape', { defaultValue: 'Shape' })}</h3>
                 <ShapeDropdown
                   current={shapeValue}
                   onSelect={onSetShape}
@@ -911,32 +944,32 @@ export function FormatSidebar({
               </section>
 
               <section className="mm-fs-section">
-                <h3 className="mm-fs-label">Fill</h3>
+                <h3 className="mm-fs-label">{t('format.fill', { defaultValue: 'Fill' })}</h3>
                 <ColorDropdown
-                  label="Fill colour"
+                  label={t('format.fillColour', { defaultValue: 'Fill colour' })}
                   current={selectedNode.color ?? null}
                   onSelect={onSetFillColor}
                   allowClear
-                  clearLabel="Default fill"
-                  placeholderLabel="Default"
+                  clearLabel={t('format.defaultFill', { defaultValue: 'Default fill' })}
+                  placeholderLabel={defaultLabel}
                 />
                 <div className="mm-fs-row mm-fs-row--color">
-                  <span className="mm-fs-field-label">Border</span>
+                  <span className="mm-fs-field-label">{t('format.border', { defaultValue: 'Border' })}</span>
                   <ColorDropdown
-                    label="Border colour"
+                    label={t('format.borderColour', { defaultValue: 'Border colour' })}
                     current={selectedNode.borderColor ?? null}
                     onSelect={onSetBorderColor}
                     allowClear
-                    clearLabel="Default border"
-                    placeholderLabel="Default"
+                    clearLabel={t('format.defaultBorder', { defaultValue: 'Default border' })}
+                    placeholderLabel={defaultLabel}
                   />
                 </div>
               </section>
 
               <section className="mm-fs-section">
-                <h3 className="mm-fs-label">Text</h3>
+                <h3 className="mm-fs-label">{t('format.text', { defaultValue: 'Text' })}</h3>
                 <div className="mm-fs-row">
-                  <label className="mm-fs-field-label" htmlFor="mm-fs-font-size">Size</label>
+                  <label className="mm-fs-field-label" htmlFor="mm-fs-font-size">{t('format.size', { defaultValue: 'Size' })}</label>
                   <select
                     id="mm-fs-font-size"
                     className="mm-fs-select"
@@ -946,7 +979,7 @@ export function FormatSidebar({
                       onSetFontSize(v === '' ? null : Number(v));
                     }}
                   >
-                    <option value="">Doc default ({docBase})</option>
+                    <option value="">{t('format.docDefault', { defaultValue: 'Doc default ({{size}})', size: docBase })}</option>
                     {FONT_SIZE_OPTIONS.map((n) => (
                       <option key={n} value={n}>{n}px</option>
                     ))}
@@ -957,65 +990,67 @@ export function FormatSidebar({
                   </select>
                 </div>
                 <div className="mm-fs-row">
-                  <span className="mm-fs-field-label">Weight</span>
+                  <span className="mm-fs-field-label">{t('format.weight', { defaultValue: 'Weight' })}</span>
                   <div className="mm-fs-btn-group">
                     <button
                       type="button"
                       className={`mm-fs-chip${selectedNode.fontWeight == null ? ' mm-fs-chip--active' : ''}`}
                       onClick={() => onSetFontWeight(null)}
-                      title="Theme default"
+                      title={t('format.themeDefault', { defaultValue: 'Theme default' })}
                     >
-                      Auto
+                      {autoLabel}
                     </button>
                     <button
                       type="button"
                       className={`mm-fs-chip${boldIsExplicit && !isBold ? ' mm-fs-chip--active' : ''}`}
                       onClick={() => onSetFontWeight('normal')}
-                      title="Regular"
+                      title={t('format.regular', { defaultValue: 'Regular' })}
                     >
-                      Regular
+                      {t('format.regular', { defaultValue: 'Regular' })}
                     </button>
                     <button
                       type="button"
                       className={`mm-fs-chip${boldIsExplicit && isBold ? ' mm-fs-chip--active' : ''}`}
                       style={{ fontWeight: 700 }}
                       onClick={() => onSetFontWeight('bold')}
-                      title="Bold"
+                      title={t('format.bold', { defaultValue: 'Bold' })}
                     >
-                      Bold
+                      {t('format.bold', { defaultValue: 'Bold' })}
                     </button>
                   </div>
                 </div>
-                <p className="mm-fs-hint">Effective base size: {Math.round(effectiveFontSize)}px</p>
+                <p className="mm-fs-hint">
+                  {t('format.effectiveBaseSize', { defaultValue: 'Effective base size: {{size}}px', size: Math.round(effectiveFontSize) })}
+                </p>
                 <div className="mm-fs-row mm-fs-row--color">
-                  <span className="mm-fs-field-label">Colour</span>
+                  <span className="mm-fs-field-label">{t('format.colour', { defaultValue: 'Colour' })}</span>
                   <ColorDropdown
-                    label="Text colour"
+                    label={t('format.textColour', { defaultValue: 'Text colour' })}
                     current={selectedNode.textColor ?? null}
                     onSelect={onSetTextColor}
                     allowClear
-                    clearLabel="Default text colour"
-                    placeholderLabel="Default"
+                    clearLabel={t('format.defaultTextColour', { defaultValue: 'Default text colour' })}
+                    placeholderLabel={defaultLabel}
                   />
                 </div>
               </section>
 
               {selectedNode.id !== 'root' && (
                 <section className="mm-fs-section">
-                  <h3 className="mm-fs-label">Branch</h3>
+                  <h3 className="mm-fs-label">{t('format.branch', { defaultValue: 'Branch' })}</h3>
                   <div className="mm-fs-row mm-fs-row--color">
-                    <span className="mm-fs-field-label">Line</span>
+                    <span className="mm-fs-field-label">{t('format.line', { defaultValue: 'Line' })}</span>
                     <ColorDropdown
-                      label="Branch line colour"
+                      label={t('format.branchLineColour', { defaultValue: 'Branch line colour' })}
                       current={selectedNode.edgeColor ?? null}
                       onSelect={onSetEdgeColor}
                       allowClear
-                      clearLabel="Follow fill / map default"
-                      placeholderLabel="Auto"
+                      clearLabel={t('format.followFill', { defaultValue: 'Follow fill / map default' })}
+                      placeholderLabel={autoLabel}
                     />
                   </div>
                   <div className="mm-fs-row">
-                    <label className="mm-fs-field-label" htmlFor="mm-fs-edge-width">Width</label>
+                    <label className="mm-fs-field-label" htmlFor="mm-fs-edge-width">{t('format.width', { defaultValue: 'Width' })}</label>
                     <select
                       id="mm-fs-edge-width"
                       className="mm-fs-select"
@@ -1025,7 +1060,7 @@ export function FormatSidebar({
                         onSetEdgeWidth(v === '' ? null : Number(v));
                       }}
                     >
-                      <option value="">Default (2)</option>
+                      <option value="">{t('format.defaultWidth', { defaultValue: 'Default (2)' })}</option>
                       {EDGE_WIDTH_OPTIONS.map((n) => (
                         <option key={n} value={n}>{n}px</option>
                       ))}
@@ -1036,36 +1071,38 @@ export function FormatSidebar({
 
               {isRootChild && (
                 <section className="mm-fs-section">
-                  <h3 className="mm-fs-label">Side</h3>
+                  <h3 className="mm-fs-label">{t('format.side', { defaultValue: 'Side' })}</h3>
                   <div className="mm-fs-btn-group">
                     <button
                       type="button"
                       className={`mm-fs-chip${(selectedNode.side ?? 'right') === 'left' ? ' mm-fs-chip--active' : ''}`}
                       onClick={() => onSetSide('left')}
                     >
-                      Left
+                      {t('format.left', { defaultValue: 'Left' })}
                     </button>
                     <button
                       type="button"
                       className={`mm-fs-chip${(selectedNode.side ?? 'right') === 'right' ? ' mm-fs-chip--active' : ''}`}
                       onClick={() => onSetSide('right')}
                     >
-                      Right
+                      {t('format.right', { defaultValue: 'Right' })}
                     </button>
                   </div>
                   {layoutMode === 'tree' && (
-                    <p className="mm-fs-hint">Choosing Left switches structure to 思维导图.</p>
+                    <p className="mm-fs-hint">
+                      {t('format.sideSwitchesToMap', { defaultValue: 'Choosing Left switches structure to mind map.' })}
+                    </p>
                   )}
                 </section>
               )}
 
               <section className="mm-fs-section">
-                <h3 className="mm-fs-label">Icons</h3>
+                <h3 className="mm-fs-label">{t('format.icons', { defaultValue: 'Icons' })}</h3>
                 <div className="mm-fs-icon-grid">
                   <button
                     type="button"
                     className="mm-fs-icon-btn mm-fs-icon-btn--clear"
-                    title="Clear icons"
+                    title={t('format.clearIcons', { defaultValue: 'Clear icons' })}
                     onClick={() => onToggleIcon(null)}
                   >
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
@@ -1083,13 +1120,15 @@ export function FormatSidebar({
                   ))}
                 </div>
                 <button type="button" className="mm-fs-action mm-fs-action--ghost" onClick={onOpenIconTray}>
-                  {iconTrayEnabled ? 'Focus icon tray' : 'Open icon tray'}
+                  {iconTrayEnabled
+                    ? t('format.focusIconTray', { defaultValue: 'Focus icon tray' })
+                    : t('format.openIconTray', { defaultValue: 'Open icon tray' })}
                 </button>
               </section>
             </>
           ) : (
             <div className="mm-fs-empty">
-              <p>Select a topic to edit its style.</p>
+              <p>{t('format.selectTopic', { defaultValue: 'Select a topic to edit its style.' })}</p>
             </div>
           )
         )}
@@ -1097,41 +1136,45 @@ export function FormatSidebar({
         {activeTab === 'canvas' && (
           <>
             <section className="mm-fs-section">
-              <h3 className="mm-fs-label">结构</h3>
+              <h3 className="mm-fs-label">{t('format.structure', { defaultValue: 'Structure' })}</h3>
               <StructureDropdown current={layoutMode} onSelect={onSetLayoutMode} />
-              <p className="mm-fs-hint">Saved with the document.</p>
+              <p className="mm-fs-hint">{t('format.savedWithDocument', { defaultValue: 'Saved with the document.' })}</p>
             </section>
 
             <section className="mm-fs-section">
-              <h3 className="mm-fs-label">Background</h3>
+              <h3 className="mm-fs-label">{t('format.background', { defaultValue: 'Background' })}</h3>
               <ColorDropdown
-                label="Canvas background"
+                label={t('format.canvasBackground', { defaultValue: 'Canvas background' })}
                 current={canvasColor}
                 onSelect={onSetCanvasColor}
                 allowClear
-                clearLabel="Match theme"
+                clearLabel={matchThemeLabel}
                 presets={CANVAS_COLOR_PRESETS}
-                placeholderLabel="Match theme"
+                placeholderLabel={matchThemeLabel}
                 placeholderSwatch={themeCanvasDefault}
               />
-              <p className="mm-fs-hint">Device preference — not stored in the document.</p>
-            </section>
-
-            <section className="mm-fs-section">
-              <h3 className="mm-fs-label">Colour theme</h3>
-              <div className="mm-fs-row">
-                <span className="mm-fs-field-label">Theme</span>
-                <ThemeDropdown currentId={activeThemeId} onSelect={onSetColorTheme} />
-              </div>
               <p className="mm-fs-hint">
-                Colours level-1 branches by index; deeper nodes fade. Explicit node fills win.
+                {t('format.devicePreference', { defaultValue: 'Device preference — not stored in the document.' })}
               </p>
             </section>
 
             <section className="mm-fs-section">
-              <h3 className="mm-fs-label">Map defaults</h3>
+              <h3 className="mm-fs-label">{t('format.colourTheme', { defaultValue: 'Colour theme' })}</h3>
               <div className="mm-fs-row">
-                <label className="mm-fs-field-label" htmlFor="mm-fs-doc-font">Font</label>
+                <span className="mm-fs-field-label">{t('format.theme', { defaultValue: 'Theme' })}</span>
+                <ThemeDropdown currentId={activeThemeId} onSelect={onSetColorTheme} />
+              </div>
+              <p className="mm-fs-hint">
+                {t('format.colourThemeHint', {
+                  defaultValue: 'Colours level-1 branches by index; deeper nodes fade. Explicit node fills win.',
+                })}
+              </p>
+            </section>
+
+            <section className="mm-fs-section">
+              <h3 className="mm-fs-label">{t('format.mapDefaults', { defaultValue: 'Map defaults' })}</h3>
+              <div className="mm-fs-row">
+                <label className="mm-fs-field-label" htmlFor="mm-fs-doc-font">{t('format.font', { defaultValue: 'Font' })}</label>
                 <select
                   id="mm-fs-doc-font"
                   className="mm-fs-select"
@@ -1144,7 +1187,7 @@ export function FormatSidebar({
                 </select>
               </div>
               <div className="mm-fs-row">
-                <label className="mm-fs-field-label" htmlFor="mm-fs-doc-size">Size</label>
+                <label className="mm-fs-field-label" htmlFor="mm-fs-doc-size">{t('format.size', { defaultValue: 'Size' })}</label>
                 <select
                   id="mm-fs-doc-size"
                   className="mm-fs-select"
@@ -1157,41 +1200,47 @@ export function FormatSidebar({
                 </select>
               </div>
               <div className="mm-fs-row mm-fs-row--color">
-                <span className="mm-fs-field-label">Edge</span>
+                <span className="mm-fs-field-label">{t('format.edge', { defaultValue: 'Edge' })}</span>
                 <ColorDropdown
-                  label="Default branch colour"
+                  label={t('format.defaultBranchColour', { defaultValue: 'Default branch colour' })}
                   current={mapStyle.defaultEdgeColor ?? null}
                   onSelect={(c) => onSetMapStyle({ defaultEdgeColor: c })}
                   allowClear
-                  clearLabel="Theme accent"
-                  placeholderLabel="Theme accent"
+                  clearLabel={t('format.themeAccent', { defaultValue: 'Theme accent' })}
+                  placeholderLabel={t('format.themeAccent', { defaultValue: 'Theme accent' })}
                 />
               </div>
-              <p className="mm-fs-hint">Saved with the document.</p>
+              <p className="mm-fs-hint">{t('format.savedWithDocument', { defaultValue: 'Saved with the document.' })}</p>
             </section>
 
             <section className="mm-fs-section">
-              <h3 className="mm-fs-label">View</h3>
+              <h3 className="mm-fs-label">{t('format.view', { defaultValue: 'View' })}</h3>
               <button type="button" className="mm-fs-action" onClick={onAutoAlign}>
-                Auto-align {selectedNode && selectedNode.id !== 'root' ? 'subtree' : 'all'}
+                {selectedNode && selectedNode.id !== 'root'
+                  ? t('format.autoAlignSubtree', { defaultValue: 'Auto-align subtree' })
+                  : t('format.autoAlignAll', { defaultValue: 'Auto-align all' })}
               </button>
               <button
                 type="button"
                 className={`mm-fs-action${focusMode ? ' mm-fs-action--active' : ''}`}
                 onClick={onToggleFocusMode}
               >
-                Focus mode {focusMode ? 'on' : 'off'}
+                {focusMode
+                  ? t('format.focusModeOn', { defaultValue: 'Focus mode on' })
+                  : t('format.focusModeOff', { defaultValue: 'Focus mode off' })}
               </button>
             </section>
 
             <section className="mm-fs-section">
-              <h3 className="mm-fs-label">Zoom</h3>
+              <h3 className="mm-fs-label">{t('format.zoom', { defaultValue: 'Zoom' })}</h3>
               <div className="mm-fs-zoom-row">
-                <button type="button" className="mm-fs-chip" onClick={onZoomOut} title="Zoom out">−</button>
+                <button type="button" className="mm-fs-chip" onClick={onZoomOut} title={t('format.zoomOut', { defaultValue: 'Zoom out' })}>−</button>
                 <span className="mm-fs-zoom-pct">{zoomPct}%</span>
-                <button type="button" className="mm-fs-chip" onClick={onZoomIn} title="Zoom in">+</button>
-                <button type="button" className="mm-fs-chip" onClick={onZoomReset} title="Reset to 100%">100%</button>
-                <button type="button" className="mm-fs-chip" onClick={onZoomFit} title="Fit view">Fit</button>
+                <button type="button" className="mm-fs-chip" onClick={onZoomIn} title={t('format.zoomIn', { defaultValue: 'Zoom in' })}>+</button>
+                <button type="button" className="mm-fs-chip" onClick={onZoomReset} title={t('format.zoomReset', { defaultValue: 'Reset to 100%' })}>100%</button>
+                <button type="button" className="mm-fs-chip" onClick={onZoomFit} title={t('format.zoomFit', { defaultValue: 'Fit view' })}>
+                  {t('format.fit', { defaultValue: 'Fit' })}
+                </button>
               </div>
             </section>
           </>

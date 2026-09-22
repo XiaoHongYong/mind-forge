@@ -1,20 +1,25 @@
 import { isTauri } from '../storage';
 import { fromBase64, toBase64 } from '../utils/base64';
+import i18n from '../i18n';
 
-const OPEN_FILTERS = [
-  {
-    name: 'Mind maps',
-    extensions: ['mmforge', 'md', 'mm', 'wxml', 'xml', 'xmind'],
-  },
-];
+function openFilters() {
+  return [
+    {
+      name: i18n.t('filters.mindMaps', { defaultValue: 'Mind maps' }),
+      extensions: ['mmforge', 'md', 'mm', 'wxml', 'xml', 'xmind'],
+    },
+  ];
+}
 
-const SAVE_FILTERS = [
-  { name: 'MindForge', extensions: ['mmforge'] },
-  { name: 'Markdown', extensions: ['md'] },
-  { name: 'FreeMind / FreePlane', extensions: ['mm'] },
-  { name: 'WiseMapping', extensions: ['wxml'] },
-  { name: 'XMind', extensions: ['xmind'] },
-];
+function saveFilters() {
+  return [
+    { name: i18n.t('filters.mindforge', { defaultValue: 'MindForge' }), extensions: ['mmforge'] },
+    { name: i18n.t('filters.markdown', { defaultValue: 'Markdown' }), extensions: ['md'] },
+    { name: i18n.t('filters.freemindFreeplane', { defaultValue: 'FreeMind / FreePlane' }), extensions: ['mm'] },
+    { name: i18n.t('filters.wisemapping', { defaultValue: 'WiseMapping' }), extensions: ['wxml'] },
+    { name: i18n.t('filters.xmind', { defaultValue: 'XMind' }), extensions: ['xmind'] },
+  ];
+}
 
 export async function readFileBytes(path: string): Promise<Uint8Array> {
   if (!isTauri()) {
@@ -39,7 +44,7 @@ export async function pickOpenPath(): Promise<string | null> {
   const { open } = await import('@tauri-apps/plugin-dialog');
   const selected = await open({
     multiple: false,
-    filters: OPEN_FILTERS,
+    filters: openFilters(),
   });
   if (!selected || Array.isArray(selected)) return null;
   return selected;
@@ -51,7 +56,7 @@ export async function pickSavePath(defaultPath: string): Promise<string | null> 
   const { save } = await import('@tauri-apps/plugin-dialog');
   const selected = await save({
     defaultPath,
-    filters: SAVE_FILTERS,
+    filters: saveFilters(),
   });
   return selected ?? null;
 }

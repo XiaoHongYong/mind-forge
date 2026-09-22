@@ -1,7 +1,11 @@
 import { Suspense, lazy, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import i18n, { applyLocalePreference } from '../i18n';
+import { syncNativeMenu } from '../i18n/syncNativeMenu';
 import { applyCanvasPalette } from '../utils/canvasPalette';
 import { useThemeStore } from '../store/theme';
+import { useUiStore } from '../store/ui';
 import { installWorkspaceAutosave } from '../document/workspace';
 
 const EditorPage = lazy(() => import('./pages/EditorPage').then((module) => ({ default: module.EditorPage })));
@@ -14,11 +18,36 @@ function darken(hex: string, amount = 25): string {
   return `#${[r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
 }
 
+function LoadingFallback() {
+  const { t } = useTranslation();
+  return (
+    <div className="flex h-full items-center justify-center text-sm text-slate-300">
+      {t('common.loading')}
+    </div>
+  );
+}
+
 export default function AppRoot() {
   const { mode, primaryColor, canvasColor } = useThemeStore();
+  const localePreference = useUiStore((s) => s.locale);
 
   useEffect(() => {
     installWorkspaceAutosave();
+  }, []);
+
+  // Keep i18n + native menu aligned after zustand rehydrate / preference changes.
+  useEffect(() => {
+    void applyLocalePreference(localePreference).then(() => syncNativeMenu());
+  }, [localePreference]);
+
+  useEffect(() => {
+    const onLanguageChanged = () => {
+      void syncNativeMenu();
+    };
+    i18n.on('languageChanged', onLanguageChanged);
+    return () => {
+      i18n.off('languageChanged', onLanguageChanged);
+    };
   }, []);
 
   useEffect(() => {
@@ -31,7 +60,7 @@ export default function AppRoot() {
 
   return (
     <BrowserRouter>
-      <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-slate-300">Loading…</div>}>
+      <Suspense fallback={<LoadingFallback />}>
         <Routes>
           <Route path="/" element={<EditorPage />} />
           <Route path="/editor" element={<Navigate to="/" replace />} />

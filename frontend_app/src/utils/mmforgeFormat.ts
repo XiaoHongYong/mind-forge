@@ -65,7 +65,7 @@ function compactNode(node: MindMapTreeNode): MindMapTreeNode {
     if (isUnsetField(key, value)) continue;
     out[key] = value;
   }
-  return out as MindMapTreeNode;
+  return out as unknown as MindMapTreeNode;
 }
 
 /** A missing `children` array means the node is a leaf. */

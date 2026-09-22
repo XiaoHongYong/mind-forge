@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next';
+
 interface ConfirmDialogProps {
   open: boolean;
   title: string;
@@ -14,14 +16,19 @@ export function ConfirmDialog({
   open,
   title,
   message,
-  confirmLabel = 'Confirm',
-  cancelLabel = 'Cancel',
+  confirmLabel,
+  cancelLabel,
   busy = false,
   danger = false,
   onConfirm,
   onClose,
 }: ConfirmDialogProps) {
+  const { t } = useTranslation();
+
   if (!open) return null;
+
+  const resolvedConfirm = confirmLabel ?? t('dialog.confirm', { defaultValue: 'Confirm' });
+  const resolvedCancel = cancelLabel ?? t('dialog.cancel', { defaultValue: 'Cancel' });
 
   return (
     <div
@@ -34,7 +41,7 @@ export function ConfirmDialog({
       >
         <div className="confirm-dialog__hero border-b border-slate-800 bg-[radial-gradient(circle_at_top_left,_rgba(239,68,68,0.16),_transparent_36%),linear-gradient(135deg,_rgba(15,23,42,0.96),_rgba(2,6,23,0.98))] px-6 py-5">
           <div className="confirm-dialog__pill inline-flex rounded-full border border-red-400/25 bg-red-400/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-red-200">
-            Permanent action
+            {t('dialog.permanentAction', { defaultValue: 'Permanent action' })}
           </div>
           <h2 className="confirm-dialog__title mt-4 text-2xl font-semibold text-white">{title}</h2>
           <p className="confirm-dialog__message mt-3 text-sm leading-6 text-slate-300">{message}</p>
@@ -47,7 +54,7 @@ export function ConfirmDialog({
             disabled={busy}
             className="confirm-dialog__cancel rounded-full border border-slate-700 bg-slate-900/70 px-5 py-2.5 text-sm font-medium text-slate-300 transition hover:border-slate-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {cancelLabel}
+            {resolvedCancel}
           </button>
           <button
             type="button"
@@ -58,7 +65,7 @@ export function ConfirmDialog({
               background: danger ? 'linear-gradient(135deg, #dc2626, #b91c1c)' : 'linear-gradient(135deg, var(--accent), var(--accent-hover))',
             }}
           >
-            {busy ? 'Working...' : confirmLabel}
+            {busy ? t('dialog.working', { defaultValue: 'Working...' }) : resolvedConfirm}
           </button>
         </div>
       </div>

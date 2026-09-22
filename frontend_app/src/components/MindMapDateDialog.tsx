@@ -2,16 +2,10 @@
  * MindMapDateDialog
  *
  * Dialog for setting start / end planning dates on a mind map node.
- *
- * Props:
- * - open: boolean
- * - startDate: string | null — ISO datetime-local value
- * - endDate: string | null
- * - onSave(start, end): save dates
- * - onClose(): close dialog
  */
 
 import { useState, useEffect, useRef, memo } from 'react';
+import { useTranslation } from 'react-i18next';
 
 interface MindMapDateDialogProps {
   open: boolean;
@@ -22,6 +16,7 @@ interface MindMapDateDialogProps {
 }
 
 function MindMapDateDialogInner({ open, startDate, endDate, onSave, onClose }: MindMapDateDialogProps) {
+  const { t } = useTranslation();
   const [start, setStart] = useState(startDate ?? '');
   const [end, setEnd] = useState(endDate ?? '');
   const startRef = useRef<HTMLInputElement>(null);
@@ -57,15 +52,15 @@ function MindMapDateDialogInner({ open, startDate, endDate, onSave, onClose }: M
             <line x1="8" y1="2" x2="8" y2="6" />
             <line x1="3" y1="10" x2="21" y2="10" />
           </svg>
-          <span>Date Planning</span>
-          <button className="mm-btn-icon" onClick={onClose} style={{ marginLeft: 'auto' }}>
+          <span>{t('dates.title', { defaultValue: 'Date Planning' })}</span>
+          <button className="mm-btn-icon" onClick={onClose} style={{ marginLeft: 'auto' }} aria-label={t('common.close', { defaultValue: 'Close' })}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round">
               <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
             </svg>
           </button>
         </div>
         <div className="mm-date-body">
-          <label className="mm-date-label">Start date</label>
+          <label className="mm-date-label">{t('dates.start', { defaultValue: 'Start date' })}</label>
           <input
             ref={startRef}
             className="mm-date-input"
@@ -74,7 +69,7 @@ function MindMapDateDialogInner({ open, startDate, endDate, onSave, onClose }: M
             onChange={(e) => setStart(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Escape') onClose(); e.stopPropagation(); }}
           />
-          <label className="mm-date-label">End date</label>
+          <label className="mm-date-label">{t('dates.end', { defaultValue: 'End date' })}</label>
           <input
             className="mm-date-input"
             type="datetime-local"
@@ -84,9 +79,9 @@ function MindMapDateDialogInner({ open, startDate, endDate, onSave, onClose }: M
           />
         </div>
         <div className="mm-date-footer">
-          <button className="mm-btn mm-btn--primary" onClick={handleSave}>Save</button>
-          <button className="mm-btn" onClick={onClose}>Cancel</button>
-          <button className="mm-btn mm-btn--danger" onClick={handleClear} style={{ marginLeft: 'auto' }}>Clear dates</button>
+          <button className="mm-btn mm-btn--primary" onClick={handleSave}>{t('common.save', { defaultValue: 'Save' })}</button>
+          <button className="mm-btn" onClick={onClose}>{t('common.cancel', { defaultValue: 'Cancel' })}</button>
+          <button className="mm-btn mm-btn--danger" onClick={handleClear} style={{ marginLeft: 'auto' }}>{t('dates.clear', { defaultValue: 'Clear dates' })}</button>
         </div>
       </div>
     </>

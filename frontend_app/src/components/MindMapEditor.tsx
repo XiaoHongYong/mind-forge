@@ -130,6 +130,12 @@ import { IconTray } from './IconTray';
 import { FormatSidebar, type FormatSidebarTab } from './FormatSidebar';
 import { matchShortcut, formatShortcut, formatButtonShortcut, SHORTCUTS } from '../shortcuts/registry';
 import { isMac } from '../platform/isMac';
+import { useTranslation } from 'react-i18next';
+import {
+  translateShortcutLabel,
+  translateShortcutGroup,
+  translateShortcutToast,
+} from '../i18n/shortcutLabels';
 import './MindMapEditor.css';
 
 /** Case-insensitive literal replace. `all` replaces every hit; otherwise the first. */
@@ -291,6 +297,7 @@ export function DesktopMindMapEditor({
   onNewDocument, onOpenDocument, onSaveAsDocument, sidePanel, documentTabs, onShowDocumentPanel,
   onDirtyChange,
 }: MindMapEditorProps) {
+  const { t } = useTranslation();
   const themeMode = useThemeStore((s) => s.mode);
   const toggleThemeMode = useThemeStore((s) => s.toggleMode);
   const keyboardLayout = useEffectiveKeyboardLayout();
@@ -621,6 +628,13 @@ export function DesktopMindMapEditor({
     setShortcutToast(label);
     toastTimer.current = setTimeout(() => setShortcutToast(null), 1600);
   }, []);
+  /** Shortcut toast: `${keys} — ${translated label}` (optional stateful toast id). */
+  const toastShortcut = useCallback((id: string, stateId?: string) => {
+    const label = stateId
+      ? translateShortcutToast(stateId, t)
+      : translateShortcutLabel(id, t);
+    showToast(`${formatShortcut(id, keyboardLayout)} — ${label}`);
+  }, [showToast, keyboardLayout, t]);
 
   // ── History (undo/redo) ────────────────────────────────────────────────────
   const history = useMindMapHistory(
@@ -1141,15 +1155,15 @@ export function DesktopMindMapEditor({
       copyNodesToClipboard(nodes);
       const text = clipboardPlainText(nodes);
       if (text) void navigator.clipboard?.writeText(text).catch(() => {});
-      showToast(`${formatShortcut('edit.copy', keyboardLayout)} — Copy`);
+      toastShortcut('edit.copy');
     });
-  }, [root, showToast, keyboardLayout]);
+  }, [root, toastShortcut]);
 
   const cutNodeIds = useCallback((ids: Iterable<string>) => {
     guardClipboardGesture(() => {
       const nodes = nodesForClipboard(root, ids).filter((node) => node.id !== 'root');
       if (nodes.length === 0) {
-        showToast("Can't cut the root");
+        showToast(t('toast.cantCutRoot', { defaultValue: "Can't cut the root" }));
         return;
       }
       copyNodesToClipboard(nodes);
@@ -1160,15 +1174,15 @@ export function DesktopMindMapEditor({
       setSelectedId(removed.parentId);
       setMultiSelect(new Set());
       mutate(removed.root);
-      showToast(`${formatShortcut('edit.cut', keyboardLayout)} — Cut`);
+      toastShortcut('edit.cut');
     });
-  }, [root, mutate, showToast, keyboardLayout]);
+  }, [root, mutate, showToast, toastShortcut, t]);
 
   const pasteNodeClipboard = useCallback((parentId: string, announceEmpty: boolean) => {
     guardClipboardGesture(() => {
       const clip = readNodeClipboard();
       if (clip.length === 0) {
-        if (announceEmpty) showToast('Nothing to paste');
+        if (announceEmpty) showToast(t('toast.nothingToPaste', { defaultValue: 'Nothing to paste' }));
         return;
       }
       const pasted = pasteClipboardNodes(root, parentId, clip);
@@ -1181,9 +1195,9 @@ export function DesktopMindMapEditor({
       mutate(pasted.root);
       setSelectedId(pasted.ids[0]);
       setMultiSelect(new Set(pasted.ids.slice(1)));
-      showToast(`${formatShortcut('edit.paste', keyboardLayout)} — Paste`);
+      toastShortcut('edit.paste');
     });
-  }, [root, mutate, showToast, keyboardLayout]);
+  }, [root, mutate, showToast, toastShortcut, t]);
 
   /** Right-click: the node under the pointer, or the whole multi-selection if it is part of one. */
   const contextTargetIds = useCallback((nodeId: string) => {
@@ -1388,7 +1402,7 @@ export function DesktopMindMapEditor({
 
   const uploadFilesIntoNotes = useCallback(async (files: File[]) => {
     if (!onNodeFileDrop || files.length === 0) {
-      showToast('Attachments are unavailable in this mode');
+      showToast(t('toast.attachmentsUnavailable', { defaultValue: 'Attachments are unavailable in this mode' }));
       return;
     }
 
@@ -1432,14 +1446,14 @@ export function DesktopMindMapEditor({
       }
       setNotesText(nextNotes);
       refs.forEach((attachment) => { void loadAttachmentPreview(attachment); });
-      showToast(`${refs.length} file${refs.length === 1 ? '' : 's'} added to notes`);
+      showToast(t('toast.filesAddedToNotes', { count: refs.length, defaultValue: '{{count}} file(s) added to notes' }));
     } catch {
-      showToast('File upload failed');
+      showToast(t('toast.fileUploadFailed', { defaultValue: 'File upload failed' }));
     } finally {
       setNotesUploadBusy(false);
       setNotesDropActive(false);
     }
-  }, [loadAttachmentPreview, mutate, notesText, onNodeFileDrop, root, selectedId, showToast]);
+  }, [loadAttachmentPreview, mutate, notesText, onNodeFileDrop, root, selectedId, showToast, t]);
 
   // Autosave: notes commit on a pause in typing, and again on close. There is
   // deliberately no Save button — closing or pressing Escape must never lose
@@ -1482,11 +1496,11 @@ export function DesktopMindMapEditor({
         delete next[attachment.attachment_id];
         return next;
       });
-      showToast('Attachment removed');
+      showToast(t('toast.attachmentRemoved', { defaultValue: 'Attachment removed' }));
     } catch {
-      showToast('Attachment delete failed');
+      showToast(t('toast.attachmentDeleteFailed', { defaultValue: 'Attachment delete failed' }));
     }
-  }, [mutate, onDeleteNodeAttachment, root, selectedId, showToast]);
+  }, [mutate, onDeleteNodeAttachment, root, selectedId, showToast, t]);
 
   // ── Search ────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -1625,9 +1639,9 @@ export function DesktopMindMapEditor({
       const dataUrl = canvas.toDataURL('image/png');
       await downloadDataUrl(dataUrl, `${buildExportFileBaseName()}.png`);
     } catch (err) {
-      showToast('PNG export failed');
+      showToast(t('toast.pngExportFailed', { defaultValue: 'PNG export failed' }));
     }
-  }, [svgRef, buildExportFileBaseName, versionLabel, versionTooltip, showToast]);
+  }, [svgRef, buildExportFileBaseName, versionLabel, versionTooltip, showToast, t]);
 
   // ── PDF export ────────────────────────────────────────────────────────────
   const exportPdf = useCallback(() => {
@@ -1635,8 +1649,8 @@ export function DesktopMindMapEditor({
     if (!svg) return;
     const parsed = versionTooltip ? new Date(versionTooltip) : null;
     const exportDate = parsed && !Number.isNaN(parsed.getTime()) ? parsed : new Date();
-    exportSvgAsPdf(svg, buildExportFileBaseName(), versionLabel, exportDate.toISOString()).catch(() => showToast('PDF export failed'));
-  }, [svgRef, buildExportFileBaseName, versionLabel, versionTooltip, showToast]);
+    exportSvgAsPdf(svg, buildExportFileBaseName(), versionLabel, exportDate.toISOString()).catch(() => showToast(t('toast.pdfExportFailed', { defaultValue: 'PDF export failed' })));
+  }, [svgRef, buildExportFileBaseName, versionLabel, versionTooltip, showToast, t]);
 
   // ══════════════════════════════════════════════════════════════════════════
   //  FOCUS MODE
@@ -1661,7 +1675,7 @@ export function DesktopMindMapEditor({
       if ((e.ctrlKey || e.metaKey) && (e.key === 'Enter' || e.key.toLowerCase() === 's')) {
         e.preventDefault();
         saveNotes();
-        showToast('Notes saved');
+        showToast(t('toast.notesSaved', { defaultValue: 'Notes saved' }));
         return;
       }
       // Escape and Ctrl+E are handled inside the editor's own keymap.
@@ -1739,77 +1753,77 @@ export function DesktopMindMapEditor({
     }
 
     // ── Registry-driven dispatch — see shortcuts/registry.ts ───────────────
-    const toast = (id: string, text: string) => showToast(`${formatShortcut(id, keyboardLayout)} — ${text}`);
+    const toast = (id: string, stateId?: string) => toastShortcut(id, stateId);
 
     const actionHandlers: Record<string, () => void> = {
-      'node.addChild': () => { addChild(selectedId); toast('node.addChild', 'Add child'); },
+      'node.addChild': () => { addChild(selectedId); toast('node.addChild'); },
       'node.addLeftChild': () => {
-        if (selectedId === 'root') { addChild('root', 'left'); toast('node.addLeftChild', 'Add left child'); }
-        else { addChild(selectedId); toast('node.addChild', 'Add child'); }
+        if (selectedId === 'root') { addChild('root', 'left'); toast('node.addLeftChild'); }
+        else { addChild(selectedId); toast('node.addChild'); }
       },
-      'node.addSibling': () => { addSibling(selectedId); toast('node.addSibling', 'Add sibling'); },
-      'node.delete': () => { hasBulk ? bulkDelete() : deleteNode(selectedId); toast('node.delete', 'Delete node'); },
+      'node.addSibling': () => { addSibling(selectedId); toast('node.addSibling'); },
+      'node.delete': () => { hasBulk ? bulkDelete() : deleteNode(selectedId); toast('node.delete'); },
       // Registry matches Alt+K by `code`, not `key`: on macOS Option+K
       // produces "˚", so comparing the character would break there.
       'node.addImage': () => {
         nodeImageTargetRef.current = selectedId;
         nodeImageInputRef.current?.click();
-        toast('node.addImage', 'Add image');
+        toast('node.addImage');
       },
       'node.rename': () => {
         const f = findNode(root, selectedId);
         if (f) startEditing(f.node);
-        toast('node.rename', 'Rename');
+        toast('node.rename');
       },
       'node.notesToggle': () => {
         setNotesOpen((v) => { if (!v) openNotes(selectedId); return !v; });
-        toast('node.notesToggle', 'Notes');
+        toast('node.notesToggle');
       },
-      'node.notesOpen': () => { openNotes(selectedId); toast('node.notesOpen', 'Edit notes'); },
-      'node.colour': () => { setShowColorPicker((v) => !v); toast('node.colour', 'Colour'); },
+      'node.notesOpen': () => { openNotes(selectedId); toast('node.notesOpen'); },
+      'node.colour': () => { setShowColorPicker((v) => !v); toast('node.colour'); },
       'view.focusMode': () => {
         setFocusMode((v) => { if (!v) setFocusAnchorId(selectedId); return !v; });
-        showToast(`${formatShortcut('view.focusMode', keyboardLayout)} — ${focusMode ? 'Focus off' : 'Focus on'}`);
+        toast('view.focusMode', focusMode ? 'view.focusMode.off' : 'view.focusMode.on');
       },
       'view.layoutMode': () => {
         toggleLayoutMode();
-        showToast(`${formatShortcut('view.layoutMode', keyboardLayout)} — ${layoutMode === 'map' ? '逻辑图' : '思维导图'}`);
+        toast('view.layoutMode', layoutMode === 'map' ? 'view.layoutMode.tree' : 'view.layoutMode.map');
       },
-      'find.shortcuts': () => { setShowShortcuts((v) => !v); toast('find.shortcuts', 'Shortcuts'); },
+      'find.shortcuts': () => { setShowShortcuts((v) => !v); toast('find.shortcuts'); },
       'node.attachFile': () => {
         nodeAttachmentInputRef.current?.click();
-        toast('node.attachFile', 'Attach file');
+        toast('node.attachFile');
       },
-      'node.linkFile': () => { openFileLinkPicker(selectedId); toast('node.linkFile', 'Link to a file'); },
-      'edit.undo': () => { undo(); toast('edit.undo', 'Undo'); },
-      'edit.redo': () => { redo(); toast('edit.redo', 'Redo'); },
+      'node.linkFile': () => { openFileLinkPicker(selectedId); toast('node.linkFile'); },
+      'edit.undo': () => { undo(); toast('edit.undo'); },
+      'edit.redo': () => { redo(); toast('edit.redo'); },
       'edit.copy': () => { copyNodeIds(getTargetIds()); },
       'edit.cut': () => { cutNodeIds(getTargetIds()); },
       'node.fold': () => {
         hasBulk ? bulkToggleCollapse() : toggleCollapse(selectedId);
-        toast('node.fold', 'Fold / Unfold');
+        toast('node.fold');
       },
-      'view.root': () => { setSelectedId('root'); toast('view.root', 'Root'); },
+      'view.root': () => { setSelectedId('root'); toast('view.root'); },
       'node.checkbox': () => {
         hasBulk ? bulkToggleCheckbox() : toggleCheckbox(selectedId);
-        toast('node.checkbox', 'Checkbox');
+        toast('node.checkbox');
       },
       'node.progress': () => {
         hasBulk ? bulkCycleProgress() : cycleProgress(selectedId);
-        toast('node.progress', 'Progress');
+        toast('node.progress');
       },
-      'node.icons': () => { setShowIconPicker((v) => !v); toast('node.icons', 'Icons'); },
-      'node.dates': () => { setShowDateDialog((v) => !v); toast('node.dates', 'Dates'); },
-      'node.url': () => { setShowUrlDialog((v) => !v); toast('node.url', 'URL'); },
+      'node.icons': () => { setShowIconPicker((v) => !v); toast('node.icons'); },
+      'node.dates': () => { setShowDateDialog((v) => !v); toast('node.dates'); },
+      'node.url': () => { setShowUrlDialog((v) => !v); toast('node.url'); },
       'node.resetPosition': () => {
         hasBulk ? bulkResetPosition() : resetNodePosition(selectedId);
-        toast('node.resetPosition', 'Reset position');
+        toast('node.resetPosition');
       },
-      'node.resetAllPositions': () => { resetAllPositions(); toast('node.resetAllPositions', 'Reset all positions'); },
-      'node.labels': () => { setShowTagDialog((v) => !v); toast('node.labels', 'Labels'); },
+      'node.resetAllPositions': () => { resetAllPositions(); toast('node.resetAllPositions'); },
+      'node.labels': () => { setShowTagDialog((v) => !v); toast('node.labels'); },
       'node.autoAlign': () => {
         autoAlignSubtree(selectedId);
-        showToast(`${formatShortcut('node.autoAlign', keyboardLayout)} — ${selectedId === 'root' ? 'Auto-align all' : 'Auto-align subtree'}`);
+        toast('node.autoAlign', selectedId === 'root' ? 'node.autoAlign.all' : 'node.autoAlign.subtree');
       },
       // No toast for search / zoom — matches the pre-registry behaviour,
       // which never announced these (search opens visibly; zoom repeats fast).
@@ -1822,15 +1836,15 @@ export function DesktopMindMapEditor({
       'view.zoomFit': () => fitView(),
       'view.colourTray': () => {
         setColourTray(!colourTrayEnabled);
-        toast('view.colourTray', colourTrayEnabled ? 'Colour tray off' : 'Colour tray on');
+        toast('view.colourTray', colourTrayEnabled ? 'view.colourTray.off' : 'view.colourTray.on');
       },
       'view.iconTray': () => {
         setIconTray(!iconTrayEnabled);
-        toast('view.iconTray', iconTrayEnabled ? 'Icon tray off' : 'Icon tray on');
+        toast('view.iconTray', iconTrayEnabled ? 'view.iconTray.off' : 'view.iconTray.on');
       },
       'view.formatSidebar': () => {
         setFormatSidebarOpen(!formatSidebarOpen);
-        toast('view.formatSidebar', formatSidebarOpen ? 'Format panel off' : 'Format panel on');
+        toast('view.formatSidebar', formatSidebarOpen ? 'view.formatSidebar.off' : 'view.formatSidebar.on');
       },
     };
 
@@ -1852,10 +1866,10 @@ export function DesktopMindMapEditor({
     e.preventDefault();
     handler();
   }, [editingId, notesOpen, openNotes, saveNotes, selectedId, root, layout, addChild, addSibling, deleteNode, cancelEdit, cycleProgress,
-    toggleCheckbox, undo, redo, toggleCollapse, showToast, resetNodePosition, resetAllPositions, autoAlignSubtree, showIconPicker, showColorPicker, focusMode, focusedIds,
+    toggleCheckbox, undo, redo, toggleCollapse, toastShortcut, resetNodePosition, resetAllPositions, autoAlignSubtree, showIconPicker, showColorPicker, focusMode, focusedIds,
     hasBulk, bulkDelete, bulkToggleCheckbox, bulkCycleProgress, bulkToggleCollapse, bulkResetPosition, keyboardLayout,
     colourTrayEnabled, setColourTray, iconTrayEnabled, setIconTray, openFileLinkPicker, onOpenFileLink,
-    toggleLayoutMode, layoutMode, formatSidebarOpen, setFormatSidebarOpen, nudgeZoom, copyNodeIds, cutNodeIds, getTargetIds, pasteNodeClipboard]);
+    toggleLayoutMode, layoutMode, formatSidebarOpen, setFormatSidebarOpen, nudgeZoom, copyNodeIds, cutNodeIds, getTargetIds, pasteNodeClipboard, t, showToast]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -1871,12 +1885,12 @@ export function DesktopMindMapEditor({
         }
         return;
       }
-      if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); handleSave(); showToast(`${formatShortcut('file.save', keyboardLayout)} — Save`); return; }
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); handleSave(); toastShortcut('file.save'); return; }
       navigateKeys(e);
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [navigateKeys, handleSave, notesOpen, saveNotes, showToast, keyboardLayout]);
+  }, [navigateKeys, handleSave, notesOpen, saveNotes, toastShortcut]);
 
   // ══════════════════════════════════════════════════════════════════════════
   //  ZOOM / PAN / DRAG-AND-DROP
@@ -2023,7 +2037,7 @@ export function DesktopMindMapEditor({
     try {
       glyph = await createNodeImageGlyph(file);
     } catch {
-      showToast('That file is not an image the browser can read');
+      showToast(t('toast.imageNotReadable', { defaultValue: 'That file is not an image the browser can read' }));
       return;
     }
 
@@ -2035,7 +2049,7 @@ export function DesktopMindMapEditor({
       if (!found) return;
       found.node.image = { ...glyph, name: file.name };
       mutate(newRoot);
-      showToast('Image added to node');
+      showToast(t('toast.imageAdded', { defaultValue: 'Image added to node' }));
       return;
     }
 
@@ -2055,13 +2069,15 @@ export function DesktopMindMapEditor({
       }
       mutate(newRoot);
       refs.forEach((attachment) => { void loadAttachmentPreview(attachment); });
-      showToast(refs.length > 0 ? 'Image added to node' : 'Image added — the full-size copy did not upload');
+      showToast(refs.length > 0
+        ? t('toast.imageAdded', { defaultValue: 'Image added to node' })
+        : t('toast.imageAddedNoFullSize', { defaultValue: 'Image added — the full-size copy did not upload' }));
     } catch {
-      showToast('Image upload failed');
+      showToast(t('toast.imageUploadFailed', { defaultValue: 'Image upload failed' }));
     } finally {
       setNodeImageBusy(false);
     }
-  }, [loadAttachmentPreview, mutate, onNodeFileDrop, root, showToast]);
+  }, [loadAttachmentPreview, mutate, onNodeFileDrop, root, showToast, t]);
 
   /** Removes the glyph. The original stays an ordinary attachment on the node. */
   const removeNodeImage = useCallback((nodeId: string) => {
@@ -2070,8 +2086,8 @@ export function DesktopMindMapEditor({
     if (!found?.node.image) return;
     found.node.image = null;
     mutate(newRoot);
-    showToast('Image removed from node');
-  }, [mutate, root, showToast]);
+    showToast(t('toast.imageRemoved', { defaultValue: 'Image removed from node' }));
+  }, [mutate, root, showToast, t]);
 
   // Ctrl+V on the canvas puts a copied picture on the selected node, or the
   // copied nodes when the clipboard holds a subtree. Ignored while a dialog
@@ -2135,11 +2151,11 @@ export function DesktopMindMapEditor({
         mutate(newRoot);
         setSelectedId(nodeId);
       }
-      showToast(`${refs.length} file${refs.length === 1 ? '' : 's'} attached`);
+      showToast(t('toast.filesAttached', { count: refs.length, defaultValue: '{{count}} file(s) attached' }));
     } finally {
       setFileDropBusyNodeId(null);
     }
-  }, [attachNodeImage, getNodeIdAtClientPoint, mutate, onNodeFileDrop, root, showToast]);
+  }, [attachNodeImage, getNodeIdAtClientPoint, mutate, onNodeFileDrop, root, showToast, t]);
 
   const attachFilesToSelectedNode = useCallback(async (files: FileList | File[] | null) => {
     if (!onNodeFileDrop || !files || files.length === 0 || selectedId === 'root') return;
@@ -2149,7 +2165,7 @@ export function DesktopMindMapEditor({
     try {
       const refs = await onNodeFileDrop(selectedId, selectedFiles);
       if (refs.length === 0) {
-        showToast('Attachment upload failed');
+        showToast(t('toast.attachmentUploadFailed', { defaultValue: 'Attachment upload failed' }));
         return;
       }
 
@@ -2160,13 +2176,13 @@ export function DesktopMindMapEditor({
         found.node.text = appendAttachmentMarkdownLinks(found.node.text, refs);
         mutate(newRoot);
       }
-      showToast(`${refs.length} file${refs.length === 1 ? '' : 's'} attached`);
+      showToast(t('toast.filesAttached', { count: refs.length, defaultValue: '{{count}} file(s) attached' }));
     } catch {
-      showToast('Attachment upload failed');
+      showToast(t('toast.attachmentUploadFailed', { defaultValue: 'Attachment upload failed' }));
     } finally {
       setFileDropBusyNodeId(null);
     }
-  }, [mutate, onNodeFileDrop, root, selectedId, showToast]);
+  }, [mutate, onNodeFileDrop, root, selectedId, showToast, t]);
 
   const startRecording = useCallback(async () => {
     try {
@@ -2190,9 +2206,9 @@ export function DesktopMindMapEditor({
       setRecordingSeconds(0);
       recordingTimerRef.current = setInterval(() => setRecordingSeconds(s => s + 1), 1000);
     } catch {
-      showToast('Microphone permission denied');
+      showToast(t('toast.micDenied', { defaultValue: 'Microphone permission denied' }));
     }
-  }, [showToast]);
+  }, [showToast, t]);
 
   const stopRecording = useCallback(() => {
     mediaRecorderRef.current?.stop();
@@ -2302,7 +2318,7 @@ export function DesktopMindMapEditor({
       switch (id) {
         case 'file.save':
           handleSave();
-          showToast(`${formatShortcut('file.save', keyboardLayout)} — Save`);
+          toastShortcut('file.save');
           break;
         case 'file.new':
           onNewDocument?.();
@@ -2561,7 +2577,7 @@ export function DesktopMindMapEditor({
   const openNodeImage = useCallback(async (node: MindMapTreeNode) => {
     const attachmentId = node.image?.attachment_id;
     if (!attachmentId) {
-      showToast('This picture has no full-size copy stored');
+      showToast(t('toast.imageNoFullSize', { defaultValue: 'This picture has no full-size copy stored' }));
       return;
     }
     const attachment = getNodeAttachments(node.id, node.attachments)
@@ -2569,11 +2585,11 @@ export function DesktopMindMapEditor({
     if (!attachment) {
       // Expected after restoring a version whose original was deleted since.
       // The glyph still renders; only click-through cannot work.
-      showToast('The full-size original is no longer available');
+      showToast(t('toast.imageOriginalGone', { defaultValue: 'The full-size original is no longer available' }));
       return;
     }
     await previewOrOpenAttachment(attachment);
-  }, [getNodeAttachments, previewOrOpenAttachment, showToast]);
+  }, [getNodeAttachments, previewOrOpenAttachment, showToast, t]);
 
   useEffect(() => () => {
     if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
@@ -2814,7 +2830,7 @@ export function DesktopMindMapEditor({
   }, [attachmentById, notesText]);
   const notesDialogAttachments = selectedNodeAttachments.length > 0 ? selectedNodeAttachments : notesReferencedAttachments;
   const selNodeAttachmentCount = notesDialogAttachments.length;
-  const selNodeAttachmentLabel = selNodeAttachmentCount === 1 ? '1 file' : `${selNodeAttachmentCount} files`;
+  const selNodeAttachmentLabel = t('toolbar.fileCount', { count: selNodeAttachmentCount, defaultValue: '{{count}} files' });
   const selNodeAttachmentNames = notesDialogAttachments.slice(0, 3).map((attachment) => attachment.name).join(', ');
   const hoveredNoteData = useMemo(() => {
     if (!hoveredNoteNodeId) return null;
@@ -2840,11 +2856,11 @@ export function DesktopMindMapEditor({
   const openBtn = (
     <button
       className="mm-btn mm-essential"
-      data-label="Open"
+      data-label={t('toolbar.open', { defaultValue: 'Open' })}
       data-shortcut={formatButtonShortcut('file.open', keyboardLayout)}
       onClick={() => onOpenDocument?.()}
       disabled={!onOpenDocument}
-      title={`Open… (${formatShortcut('file.open', keyboardLayout)})`}
+      title={t('toolbar.openTitle', { shortcut: formatShortcut('file.open', keyboardLayout), defaultValue: 'Open… ({{shortcut}})' })}
     >
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
@@ -2854,11 +2870,17 @@ export function DesktopMindMapEditor({
   const saveBtn = (
     <button
       className={`mm-btn mm-save-btn mm-essential${isDirty ? ' mm-save-btn--dirty' : ''}${saving ? ' mm-save-btn--saving' : ''}${error ? ' mm-save-btn--err' : ''}${saveMsg ? ' mm-save-btn--ok' : ''}`}
-      data-label="Save"
+      data-label={t('toolbar.save', { defaultValue: 'Save' })}
       data-shortcut={formatButtonShortcut('file.save', keyboardLayout)}
       onClick={handleSave}
       disabled={saving || (!isDirty && !error)}
-      title={saving ? 'Saving…' : error ? error : isDirty ? `Unsaved changes — click to save (${formatShortcut('file.save', keyboardLayout)})` : 'All changes saved'}
+      title={saving
+        ? t('toolbar.saving', { defaultValue: 'Saving…' })
+        : error
+          ? error
+          : isDirty
+            ? t('toolbar.unsavedClickSave', { shortcut: formatShortcut('file.save', keyboardLayout), defaultValue: 'Unsaved changes — click to save ({{shortcut}})' })
+            : t('toolbar.allChangesSaved', { defaultValue: 'All changes saved' })}
     >
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z" />
@@ -2870,10 +2892,10 @@ export function DesktopMindMapEditor({
   const formatSidebarBtn = (
     <button
       className={`mm-btn mm-essential${formatSidebarOpen ? ' mm-btn--active' : ''}`}
-      data-label="Format"
+      data-label={t('toolbar.format', { defaultValue: 'Format' })}
       data-shortcut={formatButtonShortcut('view.formatSidebar', keyboardLayout)}
       onClick={() => setFormatSidebarOpen(!formatSidebarOpen)}
-      title={`Format panel (${formatShortcut('view.formatSidebar', keyboardLayout)})`}
+      title={t('toolbar.formatPanel', { shortcut: formatShortcut('view.formatSidebar', keyboardLayout), defaultValue: 'Format panel ({{shortcut}})' })}
     >
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h10M4 12h16M4 18h7" />
@@ -2888,7 +2910,7 @@ export function DesktopMindMapEditor({
       {isMobile && (
         <div className="mm-mobile-topbar">
           <div className="mm-mobile-topbar-title">
-            <span>{title || 'Untitled'}</span>
+            <span>{title || t('common.untitled', { defaultValue: 'Untitled' })}</span>
             {versionLabel && <span className="mm-mobile-topbar-version" title={versionTooltip}>{versionLabel}</span>}
           </div>
           <div className="mm-mobile-topbar-actions">
@@ -2896,7 +2918,13 @@ export function DesktopMindMapEditor({
               className={`mm-btn mm-save-btn${isDirty ? ' mm-save-btn--dirty' : ''}${saving ? ' mm-save-btn--saving' : ''}${error ? ' mm-save-btn--err' : ''}${saveMsg ? ' mm-save-btn--ok' : ''}`}
               onClick={handleSave}
               disabled={saving || (!isDirty && !error)}
-              title={saving ? 'Saving…' : error ? error : isDirty ? `Unsaved changes` : 'All saved'}
+              title={saving
+                ? t('toolbar.saving', { defaultValue: 'Saving…' })
+                : error
+                  ? error
+                  : isDirty
+                    ? t('toolbar.unsaved', { defaultValue: 'Unsaved changes' })
+                    : t('toolbar.allSaved', { defaultValue: 'All saved' })}
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z" />
@@ -2904,7 +2932,7 @@ export function DesktopMindMapEditor({
                 <polyline points="7 3 7 8 15 8" />
               </svg>
             </button>
-            <button className="mm-btn" onClick={toggleThemeMode} title={themeMode === 'dark' ? 'Light mode' : 'Dark mode'}>
+            <button className="mm-btn" onClick={toggleThemeMode} title={themeMode === 'dark' ? t('toolbar.lightMode', { defaultValue: 'Light mode' }) : t('toolbar.darkMode', { defaultValue: 'Dark mode' })}>
               {themeMode === 'dark' ? (
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
               ) : (
@@ -2926,8 +2954,8 @@ export function DesktopMindMapEditor({
           </div>
         )}
         {densityPreset === 'large' && (
-          <div className="mm-ribbon-tabs" role="tablist" aria-label="Toolbar tabs">
-            {([['home', 'Home'], ['insert', 'Insert'], ['view', 'View']] as const).map(([tab, label]) => (
+          <div className="mm-ribbon-tabs" role="tablist" aria-label={t('toolbar.tabs', { defaultValue: 'Toolbar tabs' })}>
+            {([['home', t('toolbar.home', { defaultValue: 'Home' })], ['insert', t('menu.insert', { defaultValue: 'Insert' })], ['view', t('menu.view', { defaultValue: 'View' })]] as const).map(([tab, label]) => (
               <button
                 key={tab}
                 role="tab"
@@ -2965,41 +2993,41 @@ export function DesktopMindMapEditor({
             }}
           />
           {(densityPreset !== 'large' || activeRibbonTab === 'home') && (
-            toolbarGroup('File', <>{openBtn}{saveBtn}</>, 'home')
+            toolbarGroup(t('menu.file', { defaultValue: 'File' }), <>{openBtn}{saveBtn}</>, 'home')
           )}
           {(densityPreset !== 'large' || activeRibbonTab === 'home') && (
           <div className="mm-toolbar-group" data-ribbon-tab="home">
-            <span className="mm-toolbar-group-label">Edit</span>
+            <span className="mm-toolbar-group-label">{t('menu.edit', { defaultValue: 'Edit' })}</span>
             <div className="mm-toolbar-group-btns">
-              <button className="mm-btn mm-essential" data-label="Undo" data-shortcut={formatButtonShortcut('edit.undo', keyboardLayout)} onClick={undo} title={`Undo (${formatShortcut('edit.undo', keyboardLayout)})`} disabled={!history.canUndo}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a6 6 0 010 12H9m-6-12l4-4m-4 4l4 4"/></svg></button>
-              <button className="mm-btn mm-essential" data-label="Redo" data-shortcut={formatButtonShortcut('edit.redo', keyboardLayout)} onClick={redo} title={`Redo (${formatShortcut('edit.redo', keyboardLayout)})`} disabled={!history.canRedo}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 10H11a6 6 0 000 12h4m6-12l-4-4m4 4l-4 4"/></svg></button>
+              <button className="mm-btn mm-essential" data-label={t('toolbar.undo', { defaultValue: 'Undo' })} data-shortcut={formatButtonShortcut('edit.undo', keyboardLayout)} onClick={undo} title={t('toolbar.undoTitle', { shortcut: formatShortcut('edit.undo', keyboardLayout), defaultValue: 'Undo ({{shortcut}})' })} disabled={!history.canUndo}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a6 6 0 010 12H9m-6-12l4-4m-4 4l4 4"/></svg></button>
+              <button className="mm-btn mm-essential" data-label={t('toolbar.redo', { defaultValue: 'Redo' })} data-shortcut={formatButtonShortcut('edit.redo', keyboardLayout)} onClick={redo} title={t('toolbar.redoTitle', { shortcut: formatShortcut('edit.redo', keyboardLayout), defaultValue: 'Redo ({{shortcut}})' })} disabled={!history.canRedo}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 10H11a6 6 0 000 12h4m6-12l-4-4m4 4l-4 4"/></svg></button>
             </div>
           </div>
           )}
           {(densityPreset !== 'large' || activeRibbonTab === 'home') && (
           <div className="mm-toolbar-group" data-ribbon-tab="home">
-            <span className="mm-toolbar-group-label">Node</span>
+            <span className="mm-toolbar-group-label">{t('toolbar.node', { defaultValue: 'Node' })}</span>
             <div className="mm-toolbar-group-btns">
-              <button className="mm-btn mm-essential" data-label="Child" data-shortcut={formatButtonShortcut('node.addChild', keyboardLayout)} onClick={() => addChild(selectedId)} title={`Add child (${formatShortcut('node.addChild', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4"/></svg></button>
-              <button className="mm-btn mm-essential" data-label="Sibling" data-shortcut={formatButtonShortcut('node.addSibling', keyboardLayout)} onClick={() => addSibling(selectedId)} title={`Add sibling (${formatShortcut('node.addSibling', keyboardLayout)})`} disabled={selectedId === 'root'}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13 5H7m0 0v12m0-12l-3 3m3-3l3 3"/></svg></button>
-              <button className="mm-btn mm-btn--danger mm-essential" data-label="Delete" data-shortcut={formatButtonShortcut('node.delete', keyboardLayout)} onClick={() => hasBulk ? bulkDelete() : deleteNode(selectedId)} title={`Delete (${formatShortcut('node.delete', keyboardLayout)})`} disabled={selectedId === 'root' && !hasBulk}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button>
+              <button className="mm-btn mm-essential" data-label={t('toolbar.child', { defaultValue: 'Child' })} data-shortcut={formatButtonShortcut('node.addChild', keyboardLayout)} onClick={() => addChild(selectedId)} title={t('toolbar.addChildTitle', { shortcut: formatShortcut('node.addChild', keyboardLayout), defaultValue: 'Add child ({{shortcut}})' })}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4"/></svg></button>
+              <button className="mm-btn mm-essential" data-label={t('toolbar.sibling', { defaultValue: 'Sibling' })} data-shortcut={formatButtonShortcut('node.addSibling', keyboardLayout)} onClick={() => addSibling(selectedId)} title={t('toolbar.addSiblingTitle', { shortcut: formatShortcut('node.addSibling', keyboardLayout), defaultValue: 'Add sibling ({{shortcut}})' })} disabled={selectedId === 'root'}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13 5H7m0 0v12m0-12l-3 3m3-3l3 3"/></svg></button>
+              <button className="mm-btn mm-btn--danger mm-essential" data-label={t('toolbar.delete', { defaultValue: 'Delete' })} data-shortcut={formatButtonShortcut('node.delete', keyboardLayout)} onClick={() => hasBulk ? bulkDelete() : deleteNode(selectedId)} title={t('toolbar.deleteTitle', { shortcut: formatShortcut('node.delete', keyboardLayout), defaultValue: 'Delete ({{shortcut}})' })} disabled={selectedId === 'root' && !hasBulk}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button>
             </div>
           </div>
           )}
           {(densityPreset !== 'large' || activeRibbonTab === 'home') && (
           <div className="mm-toolbar-group" data-ribbon-tab="home">
-            <span className="mm-toolbar-group-label">Format</span>
+            <span className="mm-toolbar-group-label">{t('toolbar.format', { defaultValue: 'Format' })}</span>
             <div className="mm-toolbar-group-btns">
-              <button className="mm-btn" data-label="Checkbox" data-shortcut={formatButtonShortcut('node.checkbox', keyboardLayout)} onClick={() => { hasBulk ? bulkToggleCheckbox() : toggleCheckbox(selectedId); }} title={`Checkbox (${formatShortcut('node.checkbox', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg></button>
-              <button className="mm-btn" data-label="Progress" data-shortcut={formatButtonShortcut('node.progress', keyboardLayout)} onClick={() => { hasBulk ? bulkCycleProgress() : cycleProgress(selectedId); }} title={`Progress (${formatShortcut('node.progress', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 017.07 17.07" strokeLinecap="round"/></svg></button>
+              <button className="mm-btn" data-label={t('toolbar.checkbox', { defaultValue: 'Checkbox' })} data-shortcut={formatButtonShortcut('node.checkbox', keyboardLayout)} onClick={() => { hasBulk ? bulkToggleCheckbox() : toggleCheckbox(selectedId); }} title={t('toolbar.checkboxTitle', { shortcut: formatShortcut('node.checkbox', keyboardLayout), defaultValue: 'Checkbox ({{shortcut}})' })}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg></button>
+              <button className="mm-btn" data-label={t('toolbar.progress', { defaultValue: 'Progress' })} data-shortcut={formatButtonShortcut('node.progress', keyboardLayout)} onClick={() => { hasBulk ? bulkCycleProgress() : cycleProgress(selectedId); }} title={t('toolbar.progressTitle', { shortcut: formatShortcut('node.progress', keyboardLayout), defaultValue: 'Progress ({{shortcut}})' })}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 017.07 17.07" strokeLinecap="round"/></svg></button>
               <div style={{ position: 'relative' }}>
-                <button className="mm-btn mm-btn--color" data-label="Colour" data-shortcut={formatButtonShortcut('node.colour', keyboardLayout)} onClick={() => setShowColorPicker((v) => !v)} title={`Color (${formatShortcut('node.colour', keyboardLayout)})`} style={{ background: selNode?.color ?? 'transparent' }}>
+                <button className="mm-btn mm-btn--color" data-label={t('toolbar.colour', { defaultValue: 'Colour' })} data-shortcut={formatButtonShortcut('node.colour', keyboardLayout)} onClick={() => setShowColorPicker((v) => !v)} title={t('toolbar.colourTitle', { shortcut: formatShortcut('node.colour', keyboardLayout), defaultValue: 'Colour ({{shortcut}})' })} style={{ background: selNode?.color ?? 'transparent' }}>
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"/></svg>
                 </button>
                 <MindMapColorPicker open={showColorPicker} currentColor={selNode?.color ?? null} onSelect={(c) => { hasBulk ? bulkSetColor(c) : setNodeColor(selectedId, c); setShowColorPicker(false); }} onClose={() => setShowColorPicker(false)} showToast={showToast} />
               </div>
               <div style={{ position: 'relative' }}>
-                <button className="mm-btn" data-label="Icons" data-shortcut={formatButtonShortcut('node.icons', keyboardLayout)} onClick={() => setShowIconPicker((v) => !v)} title={`Icons (${formatShortcut('node.icons', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg></button>
+                <button className="mm-btn" data-label={t('toolbar.icons', { defaultValue: 'Icons' })} data-shortcut={formatButtonShortcut('node.icons', keyboardLayout)} onClick={() => setShowIconPicker((v) => !v)} title={t('toolbar.iconsTitle', { shortcut: formatShortcut('node.icons', keyboardLayout), defaultValue: 'Icons ({{shortcut}})' })}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg></button>
                 <MindMapIconPicker open={showIconPicker} currentIcons={selNode?.icons ?? []} onSelect={(name: string | null) => hasBulk ? bulkSetIcon(name) : setNodeIcon(selectedId, name)} onClose={() => setShowIconPicker(false)} showToast={showToast} />
               </div>
             </div>
@@ -3009,11 +3037,16 @@ export function DesktopMindMapEditor({
             const notesBtn = (
               <button
                 key="notes"
-                data-label="Notes"
+                data-label={t('toolbar.notes', { defaultValue: 'Notes' })}
                 data-shortcut={formatButtonShortcut('node.notesToggle', keyboardLayout)}
                 className={`mm-btn mm-btn--notes mm-essential${selNodeAttachmentCount > 0 ? ' mm-btn--notes-has-files' : ''}`}
                 onClick={() => { openNotes(selectedId); setNotesOpen(true); }}
-                title={selNodeAttachmentCount > 0 ? `Notes (${formatShortcut('node.notesToggle', keyboardLayout)}) · ${selNodeAttachmentLabel}${selNodeAttachmentNames ? `: ${selNodeAttachmentNames}` : ''}` : `Notes (${formatShortcut('node.notesToggle', keyboardLayout)})`}
+                title={(() => {
+                  const base = t('toolbar.notesTitle', { shortcut: formatShortcut('node.notesToggle', keyboardLayout), defaultValue: 'Notes ({{shortcut}})' });
+                  return selNodeAttachmentCount > 0
+                    ? `${base} · ${selNodeAttachmentLabel}${selNodeAttachmentNames ? `: ${selNodeAttachmentNames}` : ''}`
+                    : base;
+                })()}
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
                 {selNodeAttachmentCount > 0 && (
@@ -3024,19 +3057,19 @@ export function DesktopMindMapEditor({
                 )}
               </button>
             );
-            const datesBtn = <button key="dates" className="mm-btn" data-label="Dates" data-shortcut={formatButtonShortcut('node.dates', keyboardLayout)} onClick={() => setShowDateDialog(true)} title={`Dates (${formatShortcut('node.dates', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></button>;
-            const tagsBtn = <button key="tags" className={`mm-btn${showTagDialog ? ' mm-btn--active' : ''}`} data-label="Tags" data-shortcut={formatButtonShortcut('node.labels', keyboardLayout)} onClick={() => setShowTagDialog((v) => !v)} title={`Tags (${formatShortcut('node.labels', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M7 7h.01M7 3h5l8.5 8.5a2 2 0 010 2.83l-5.17 5.17a2 2 0 01-2.83 0L3 10V5a2 2 0 012-2z"/></svg></button>;
+            const datesBtn = <button key="dates" className="mm-btn" data-label={t('toolbar.dates', { defaultValue: 'Dates' })} data-shortcut={formatButtonShortcut('node.dates', keyboardLayout)} onClick={() => setShowDateDialog(true)} title={t('toolbar.datesTitle', { shortcut: formatShortcut('node.dates', keyboardLayout), defaultValue: 'Dates ({{shortcut}})' })}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></button>;
+            const tagsBtn = <button key="tags" className={`mm-btn${showTagDialog ? ' mm-btn--active' : ''}`} data-label={t('toolbar.tags', { defaultValue: 'Tags' })} data-shortcut={formatButtonShortcut('node.labels', keyboardLayout)} onClick={() => setShowTagDialog((v) => !v)} title={t('toolbar.tagsTitle', { shortcut: formatShortcut('node.labels', keyboardLayout), defaultValue: 'Tags ({{shortcut}})' })}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M7 7h.01M7 3h5l8.5 8.5a2 2 0 010 2.83l-5.17 5.17a2 2 0 01-2.83 0L3 10V5a2 2 0 012-2z"/></svg></button>;
             const attachBtn = (
               <button
                 key="attach"
                 className="mm-btn"
-                data-label="Attach"
+                data-label={t('toolbar.attach', { defaultValue: 'Attach' })}
                 data-shortcut={formatButtonShortcut('node.attachFile', keyboardLayout)}
                 // The same picker the F6 shortcut and the Insert menu open. This
                 // once pointed at the image-only input, so the button accepted
                 // pictures and nothing else.
                 onClick={() => nodeAttachmentInputRef.current?.click()}
-                title={`Attach files to selected node (${formatShortcut('node.attachFile', keyboardLayout)})`}
+                title={t('toolbar.attachTitle', { shortcut: formatShortcut('node.attachFile', keyboardLayout), defaultValue: 'Attach files to selected node ({{shortcut}})' })}
                 disabled={!onNodeFileDrop || selectedId === 'root'}
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21.44 11.05l-9.19 9.19a6 6 0 11-8.49-8.49l9.2-9.19a4 4 0 015.65 5.66l-9.2 9.19a2 2 0 11-2.82-2.82l8.48-8.48"/></svg>
@@ -3046,13 +3079,13 @@ export function DesktopMindMapEditor({
               <button
                 key="image"
                 className="mm-btn"
-                data-label="Image"
+                data-label={t('toolbar.image', { defaultValue: 'Image' })}
                 data-shortcut={formatButtonShortcut('node.addImage', keyboardLayout)}
                 onClick={() => {
                   nodeImageTargetRef.current = selectedId;
                   nodeImageInputRef.current?.click();
                 }}
-                title={`Add a picture to the selected node (${formatShortcut('node.addImage', keyboardLayout)})`}
+                title={t('toolbar.imageTitle', { shortcut: formatShortcut('node.addImage', keyboardLayout), defaultValue: 'Add a picture to the selected node ({{shortcut}})' })}
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path strokeLinecap="round" strokeLinejoin="round" d="M21 15l-5-5L5 21L21 15z"/></svg>
               </button>
@@ -3064,12 +3097,12 @@ export function DesktopMindMapEditor({
               <button
                 key="link"
                 className={`mm-btn${selNode?.link?.path ? ' mm-btn--active' : ''}`}
-                data-label="Link"
+                data-label={t('toolbar.link', { defaultValue: 'Link' })}
                 data-shortcut={formatButtonShortcut('node.linkFile', keyboardLayout)}
                 onClick={() => openFileLinkPicker(selectedId)}
                 title={selNode?.link?.label
-                  ? `Linked to ${selNode.link.label} (${formatShortcut('node.linkFile', keyboardLayout)})`
-                  : `Link this node to another file (${formatShortcut('node.linkFile', keyboardLayout)})`}
+                  ? t('toolbar.linkedTo', { label: selNode.link.label, shortcut: formatShortcut('node.linkFile', keyboardLayout), defaultValue: 'Linked to {{label}} ({{shortcut}})' })
+                  : t('toolbar.linkTitle', { shortcut: formatShortcut('node.linkFile', keyboardLayout), defaultValue: 'Link this node to another file ({{shortcut}})' })}
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinejoin="round"><path d="M 3 5 L 9 3 L 15 6 L 21 4 L 21 19 L 15 21 L 9 18 L 3 20 Z"/><path d="M 9 3 L 9 18 M 15 6 L 15 21"/></svg>
               </button>
@@ -3078,34 +3111,34 @@ export function DesktopMindMapEditor({
               <button
                 key="url"
                 className={`mm-btn${showUrlDialog ? ' mm-btn--active' : ''}`}
-                data-label="URL"
+                data-label={t('toolbar.url', { defaultValue: 'URL' })}
                 data-shortcut={formatButtonShortcut('node.url', keyboardLayout)}
                 onClick={() => setShowUrlDialog((v) => !v)}
-                title={`Add a web link to the selected node (${formatShortcut('node.url', keyboardLayout)})`}
+                title={t('toolbar.urlTitle', { shortcut: formatShortcut('node.url', keyboardLayout), defaultValue: 'Add a web link to the selected node ({{shortcut}})' })}
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path strokeLinecap="round" strokeLinejoin="round" d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
               </button>
             );
-            const alignBtn =<button key="align" className="mm-btn" data-label="Align" data-shortcut={formatButtonShortcut('node.autoAlign', keyboardLayout)} onClick={() => autoAlignSubtree(selectedId)} title={`${selectedId === 'root' ? 'Auto-align all nodes' : 'Auto-align subtree'} (${formatShortcut('node.autoAlign', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 6h18M3 12h12M3 18h8"/></svg></button>;
-            const focusBtn = <button key="focus" className={`mm-btn${focusMode ? ' mm-btn--active' : ''}`} data-label="Focus" data-shortcut={formatButtonShortcut('view.focusMode', keyboardLayout)} onClick={() => { setFocusMode((v) => { if (!v) setFocusAnchorId(selectedId); return !v; }); }} title={`Focus mode (${formatShortcut('view.focusMode', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="3"/><path d="M12 1v2m0 18v2m8.66-17.66l-1.41 1.41M4.75 19.25l-1.41 1.41M23 12h-2M3 12H1m17.66 7.66l-1.41-1.41M4.75 4.75L3.34 3.34"/></svg></button>;
-            const searchBtn = <button key="search" className={`mm-btn mm-essential${searchOpen ? ' mm-btn--active' : ''}`} data-label="Search" data-shortcut={formatButtonShortcut('find.search', keyboardLayout)} onClick={() => setSearchOpen((open) => !open)} title={`${searchOpen ? 'Hide search' : 'Search'} (${formatShortcut('find.search', keyboardLayout)})`} aria-pressed={searchOpen}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>;
-            const shortcutsBtn = <button key="shortcuts" className="mm-btn" data-label="Shortcuts" data-shortcut={formatButtonShortcut('find.shortcuts', keyboardLayout)} onClick={() => setShowShortcuts((v) => !v)} title={`Shortcuts (${formatShortcut('find.shortcuts', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg></button>;
+            const alignBtn =<button key="align" className="mm-btn" data-label={t('toolbar.align', { defaultValue: 'Align' })} data-shortcut={formatButtonShortcut('node.autoAlign', keyboardLayout)} onClick={() => autoAlignSubtree(selectedId)} title={selectedId === 'root' ? t('toolbar.alignAllTitle', { shortcut: formatShortcut('node.autoAlign', keyboardLayout), defaultValue: 'Auto-align all nodes ({{shortcut}})' }) : t('toolbar.alignSubtreeTitle', { shortcut: formatShortcut('node.autoAlign', keyboardLayout), defaultValue: 'Auto-align subtree ({{shortcut}})' })}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 6h18M3 12h12M3 18h8"/></svg></button>;
+            const focusBtn = <button key="focus" className={`mm-btn${focusMode ? ' mm-btn--active' : ''}`} data-label={t('toolbar.focus', { defaultValue: 'Focus' })} data-shortcut={formatButtonShortcut('view.focusMode', keyboardLayout)} onClick={() => { setFocusMode((v) => { if (!v) setFocusAnchorId(selectedId); return !v; }); }} title={t('toolbar.focusTitle', { shortcut: formatShortcut('view.focusMode', keyboardLayout), defaultValue: 'Focus mode ({{shortcut}})' })}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="3"/><path d="M12 1v2m0 18v2m8.66-17.66l-1.41 1.41M4.75 19.25l-1.41 1.41M23 12h-2M3 12H1m17.66 7.66l-1.41-1.41M4.75 4.75L3.34 3.34"/></svg></button>;
+            const searchBtn = <button key="search" className={`mm-btn mm-essential${searchOpen ? ' mm-btn--active' : ''}`} data-label={t('toolbar.search', { defaultValue: 'Search' })} data-shortcut={formatButtonShortcut('find.search', keyboardLayout)} onClick={() => setSearchOpen((open) => !open)} title={searchOpen ? t('toolbar.hideSearchTitle', { shortcut: formatShortcut('find.search', keyboardLayout), defaultValue: 'Hide search ({{shortcut}})' }) : t('toolbar.searchTitle', { shortcut: formatShortcut('find.search', keyboardLayout), defaultValue: 'Search ({{shortcut}})' })} aria-pressed={searchOpen}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>;
+            const shortcutsBtn = <button key="shortcuts" className="mm-btn" data-label={t('toolbar.shortcuts', { defaultValue: 'Shortcuts' })} data-shortcut={formatButtonShortcut('find.shortcuts', keyboardLayout)} onClick={() => setShowShortcuts((v) => !v)} title={t('toolbar.shortcutsTitle', { shortcut: formatShortcut('find.shortcuts', keyboardLayout), defaultValue: 'Shortcuts ({{shortcut}})' })}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg></button>;
             const zoomFitted = zoomPreset === 'fit';
-            const zoomGroup = (densityPreset !== 'large' || activeRibbonTab === 'view') && toolbarGroup('Zoom', <>
-              <button className="mm-btn" data-label="Zoom in" data-shortcut={formatButtonShortcut('view.zoomIn', keyboardLayout)} onClick={() => nudgeZoom(0.15)} title={`Zoom in (${formatShortcut('view.zoomIn', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="11" cy="11" r="8"/><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M11 8v6m-3-3h6"/></svg></button>
-              <button className="mm-btn" data-label="Zoom out" data-shortcut={formatButtonShortcut('view.zoomOut', keyboardLayout)} onClick={() => nudgeZoom(-0.15)} title={`Zoom out (${formatShortcut('view.zoomOut', keyboardLayout)})`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="11" cy="11" r="8"/><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M8 11h6"/></svg></button>
-              <button className={`mm-btn${zoomFitted ? ' mm-btn--active' : ''}`} data-label={zoomFitted ? '100%' : 'Fit'} data-shortcut={zoomFitted ? undefined : formatButtonShortcut('view.zoomFit', keyboardLayout)} onClick={toggleZoomFit} title={zoomFitted ? 'Zoom to 100%' : `Fit view (${formatShortcut('view.zoomFit', keyboardLayout)})`} aria-pressed={zoomFitted}>{zoomFitted ? <span className="mm-zoom-pct">100%</span> : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5"/></svg>}</button>
+            const zoomGroup = (densityPreset !== 'large' || activeRibbonTab === 'view') && toolbarGroup(t('toolbar.zoomGroup', { defaultValue: 'Zoom' }), <>
+              <button className="mm-btn" data-label={t('toolbar.zoomIn', { defaultValue: 'Zoom in' })} data-shortcut={formatButtonShortcut('view.zoomIn', keyboardLayout)} onClick={() => nudgeZoom(0.15)} title={t('toolbar.zoomInTitle', { shortcut: formatShortcut('view.zoomIn', keyboardLayout), defaultValue: 'Zoom in ({{shortcut}})' })}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="11" cy="11" r="8"/><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M11 8v6m-3-3h6"/></svg></button>
+              <button className="mm-btn" data-label={t('toolbar.zoomOut', { defaultValue: 'Zoom out' })} data-shortcut={formatButtonShortcut('view.zoomOut', keyboardLayout)} onClick={() => nudgeZoom(-0.15)} title={t('toolbar.zoomOutTitle', { shortcut: formatShortcut('view.zoomOut', keyboardLayout), defaultValue: 'Zoom out ({{shortcut}})' })}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="11" cy="11" r="8"/><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M8 11h6"/></svg></button>
+              <button className={`mm-btn${zoomFitted ? ' mm-btn--active' : ''}`} data-label={zoomFitted ? t('toolbar.zoom100', { defaultValue: '100%' }) : t('toolbar.fit', { defaultValue: 'Fit' })} data-shortcut={zoomFitted ? undefined : formatButtonShortcut('view.zoomFit', keyboardLayout)} onClick={toggleZoomFit} title={zoomFitted ? t('toolbar.zoom100Title', { defaultValue: 'Zoom to 100%' }) : t('toolbar.fitTitle', { shortcut: formatShortcut('view.zoomFit', keyboardLayout), defaultValue: 'Fit view ({{shortcut}})' })} aria-pressed={zoomFitted}>{zoomFitted ? <span className="mm-zoom-pct">100%</span> : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5"/></svg>}</button>
             </>, 'view');
 
             if (densityPreset === 'large') {
               return (
                 <>
-                  {activeRibbonTab === 'insert' && toolbarGroup('Content', <>{notesBtn}{datesBtn}{tagsBtn}</>, 'insert')}
-                  {activeRibbonTab === 'insert' && toolbarGroup('Links', <>{linkBtn}{urlBtn}</>, 'insert')}
-                  {activeRibbonTab === 'insert' && toolbarGroup('Files', <>{imageBtn}{attachBtn}</>, 'insert')}
+                  {activeRibbonTab === 'insert' && toolbarGroup(t('toolbar.content', { defaultValue: 'Content' }), <>{notesBtn}{datesBtn}{tagsBtn}</>, 'insert')}
+                  {activeRibbonTab === 'insert' && toolbarGroup(t('toolbar.links', { defaultValue: 'Links' }), <>{linkBtn}{urlBtn}</>, 'insert')}
+                  {activeRibbonTab === 'insert' && toolbarGroup(t('toolbar.files', { defaultValue: 'Files' }), <>{imageBtn}{attachBtn}</>, 'insert')}
                   {zoomGroup}
-                  {activeRibbonTab === 'view' && toolbarGroup('Arrange', <>{alignBtn}{focusBtn}</>, 'view')}
-                  {activeRibbonTab === 'view' && toolbarGroup('Find', <>{searchBtn}{shortcutsBtn}</>, 'view')}
+                  {activeRibbonTab === 'view' && toolbarGroup(t('toolbar.arrange', { defaultValue: 'Arrange' }), <>{alignBtn}{focusBtn}</>, 'view')}
+                  {activeRibbonTab === 'view' && toolbarGroup(t('menu.find', { defaultValue: 'Find' }), <>{searchBtn}{shortcutsBtn}</>, 'view')}
                   {/* Theme and Settings live in the app View / MindForge menus. */}
                 </>
               );
@@ -3115,9 +3148,9 @@ export function DesktopMindMapEditor({
               // Light/dark, shortcuts, and export live in the app menus.
               return (
                 <>
-                  {toolbarGroup('Insert', <>{notesBtn}{datesBtn}{tagsBtn}{linkBtn}{urlBtn}{imageBtn}{attachBtn}</>)}
+                  {toolbarGroup(t('menu.insert', { defaultValue: 'Insert' }), <>{notesBtn}{datesBtn}{tagsBtn}{linkBtn}{urlBtn}{imageBtn}{attachBtn}</>)}
                   {zoomGroup}
-                  {toolbarGroup('Navigate', <>{focusBtn}{formatSidebarBtn}{searchBtn}{shortcutsBtn}</>)}
+                  {toolbarGroup(t('toolbar.navigate', { defaultValue: 'Navigate' }), <>{focusBtn}{formatSidebarBtn}{searchBtn}{shortcutsBtn}</>)}
                 </>
               );
             }
@@ -3126,41 +3159,41 @@ export function DesktopMindMapEditor({
             // just the essentials + the "More" overflow.
             return (
               <>
-                {toolbarGroup('Content', <>{notesBtn}{datesBtn}{tagsBtn}</>)}
-                {toolbarGroup('Links', <>{linkBtn}{urlBtn}</>)}
-                {toolbarGroup('Files', <>{imageBtn}{attachBtn}</>)}
+                {toolbarGroup(t('toolbar.content', { defaultValue: 'Content' }), <>{notesBtn}{datesBtn}{tagsBtn}</>)}
+                {toolbarGroup(t('toolbar.links', { defaultValue: 'Links' }), <>{linkBtn}{urlBtn}</>)}
+                {toolbarGroup(t('toolbar.files', { defaultValue: 'Files' }), <>{imageBtn}{attachBtn}</>)}
                 {zoomGroup}
-                {toolbarGroup('Arrange', <>{alignBtn}{focusBtn}{formatSidebarBtn}</>)}
-                {toolbarGroup('Find', <>{searchBtn}{shortcutsBtn}</>)}
+                {toolbarGroup(t('toolbar.arrange', { defaultValue: 'Arrange' }), <>{alignBtn}{focusBtn}{formatSidebarBtn}</>)}
+                {toolbarGroup(t('menu.find', { defaultValue: 'Find' }), <>{searchBtn}{shortcutsBtn}</>)}
               </>
             );
           })()}
           {toolbarMode === 'essentials' && (
             <div style={{ position: 'relative' }}>
-              <button className="mm-btn mm-essential" data-label="More" onClick={() => setShowToolbarOverflow((v) => !v)} title="More actions">
+              <button className="mm-btn mm-essential" data-label={t('toolbar.more', { defaultValue: 'More' })} onClick={() => setShowToolbarOverflow((v) => !v)} title={t('toolbar.moreActions', { defaultValue: 'More actions' })}>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/><circle cx="5" cy="12" r="1.5"/></svg>
               </button>
               {showToolbarOverflow && (
                 <div className="mm-overflow-menu" onMouseDown={(e) => e.stopPropagation()}>
                   {([
-                    ['node.checkbox', 'Checkbox', () => { hasBulk ? bulkToggleCheckbox() : toggleCheckbox(selectedId); }],
-                    ['node.progress', 'Progress', () => { hasBulk ? bulkCycleProgress() : cycleProgress(selectedId); }],
-                    ['node.colour', 'Colour', () => setShowColorPicker((v) => !v)],
-                    ['node.icons', 'Icons', () => setShowIconPicker((v) => !v)],
-                    ['node.dates', 'Dates', () => setShowDateDialog(true)],
-                    ['node.labels', 'Tags', () => setShowTagDialog((v) => !v)],
-                    ['view.zoomIn', 'Zoom in', () => nudgeZoom(0.15)],
-                    ['view.zoomOut', 'Zoom out', () => nudgeZoom(-0.15)],
-                    [zoomPreset === 'fit' ? '' : 'view.zoomFit', zoomPreset === 'fit' ? '100%' : 'Fit view', toggleZoomFit],
-                    ['node.autoAlign', 'Auto-align', () => autoAlignSubtree(selectedId)],
-                    ['view.focusMode', 'Focus mode', () => { setFocusMode((v) => { if (!v) setFocusAnchorId(selectedId); return !v; }); }],
-                    ['view.formatSidebar', 'Format panel', () => setFormatSidebarOpen(!formatSidebarOpen)],
-                    ['find.shortcuts', 'Shortcuts', () => setShowShortcuts((v) => !v)],
-                    ['node.url', 'URL', () => setShowUrlDialog((v) => !v)],
-                    ['node.addImage', 'Image', () => { nodeImageTargetRef.current = selectedId; nodeImageInputRef.current?.click(); }],
-                    ['node.attachFile', 'Attach file', () => nodeAttachmentInputRef.current?.click()],
+                    ['node.checkbox', translateShortcutLabel('node.checkbox', t), () => { hasBulk ? bulkToggleCheckbox() : toggleCheckbox(selectedId); }],
+                    ['node.progress', translateShortcutLabel('node.progress', t), () => { hasBulk ? bulkCycleProgress() : cycleProgress(selectedId); }],
+                    ['node.colour', t('toolbar.colour', { defaultValue: 'Colour' }), () => setShowColorPicker((v) => !v)],
+                    ['node.icons', translateShortcutLabel('node.icons', t), () => setShowIconPicker((v) => !v)],
+                    ['node.dates', translateShortcutLabel('node.dates', t), () => setShowDateDialog(true)],
+                    ['node.labels', t('toolbar.tags', { defaultValue: 'Tags' }), () => setShowTagDialog((v) => !v)],
+                    ['view.zoomIn', translateShortcutLabel('view.zoomIn', t), () => nudgeZoom(0.15)],
+                    ['view.zoomOut', translateShortcutLabel('view.zoomOut', t), () => nudgeZoom(-0.15)],
+                    [zoomPreset === 'fit' ? '' : 'view.zoomFit', zoomPreset === 'fit' ? t('toolbar.zoom100', { defaultValue: '100%' }) : t('toolbar.fitView', { defaultValue: 'Fit view' }), toggleZoomFit],
+                    ['node.autoAlign', t('toolbar.align', { defaultValue: 'Align' }), () => autoAlignSubtree(selectedId)],
+                    ['view.focusMode', translateShortcutLabel('view.focusMode', t), () => { setFocusMode((v) => { if (!v) setFocusAnchorId(selectedId); return !v; }); }],
+                    ['view.formatSidebar', t('toolbar.format', { defaultValue: 'Format' }), () => setFormatSidebarOpen(!formatSidebarOpen)],
+                    ['find.shortcuts', translateShortcutLabel('find.shortcuts', t), () => setShowShortcuts((v) => !v)],
+                    ['node.url', translateShortcutLabel('node.url', t), () => setShowUrlDialog((v) => !v)],
+                    ['node.addImage', t('toolbar.image', { defaultValue: 'Image' }), () => { nodeImageTargetRef.current = selectedId; nodeImageInputRef.current?.click(); }],
+                    ['node.attachFile', translateShortcutLabel('node.attachFile', t), () => nodeAttachmentInputRef.current?.click()],
                   ] as ReadonlyArray<readonly [string, string, () => void]>)
-                    .concat(onOpenFileLink ? [['node.linkFile', 'Link to file', () => openFileLinkPicker(selectedId)]] : [])
+                    .concat(onOpenFileLink ? [['node.linkFile', translateShortcutLabel('node.linkFile', t), () => openFileLinkPicker(selectedId)]] : [])
                     .map(([id, label, onClick]) => (
                     <button key={label} className="mm-context-item" onClick={() => { onClick(); setShowToolbarOverflow(false); }}>
                       {label}{id && <kbd>{formatShortcut(id, keyboardLayout)}</kbd>}
@@ -3206,7 +3239,7 @@ export function DesktopMindMapEditor({
           <div
             className="mm-find-widget"
             role="search"
-            aria-label="Find"
+            aria-label={t('find.find', { defaultValue: 'Find' })}
             onMouseDown={(e) => e.stopPropagation()}
             onKeyDown={(e) => {
               if (e.key === 'Escape') setSearchOpen(false);
@@ -3218,8 +3251,8 @@ export function DesktopMindMapEditor({
                 type="button"
                 className={`mm-find-btn mm-find-expand${replaceOpen ? ' mm-find-expand--open' : ''}`}
                 aria-expanded={replaceOpen}
-                aria-label={replaceOpen ? 'Hide replace' : 'Toggle replace'}
-                title={replaceOpen ? 'Hide replace' : 'Toggle replace'}
+                aria-label={replaceOpen ? t('find.hideReplace', { defaultValue: 'Hide replace' }) : t('find.toggleReplace', { defaultValue: 'Toggle replace' })}
+                title={replaceOpen ? t('find.hideReplace', { defaultValue: 'Hide replace' }) : t('find.toggleReplace', { defaultValue: 'Toggle replace' })}
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => {
                   setReplaceOpen((open) => !open);
@@ -3231,8 +3264,8 @@ export function DesktopMindMapEditor({
               <input
                 ref={searchRef}
                 className="mm-find-input"
-                placeholder="Find"
-                aria-label="Find"
+                placeholder={t('find.find', { defaultValue: 'Find' })}
+                aria-label={t('find.find', { defaultValue: 'Find' })}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onKeyDown={(e) => {
@@ -3244,16 +3277,18 @@ export function DesktopMindMapEditor({
               />
               <span className={`mm-find-count${searchQuery.trim() && searchResults.length === 0 ? ' mm-find-count--empty' : ''}`}>
                 {searchQuery.trim()
-                  ? (searchResults.length === 0 ? 'No results' : `${searchIdx + 1} of ${searchResults.length}`)
+                  ? (searchResults.length === 0
+                    ? t('find.noResults', { defaultValue: 'No results' })
+                    : t('find.matchOf', { current: searchIdx + 1, total: searchResults.length, defaultValue: '{{current}} of {{total}}' }))
                   : ''}
               </span>
-              <button type="button" className="mm-find-btn" aria-label="Previous match" title="Previous match" disabled={searchResults.length === 0} onMouseDown={(e) => e.preventDefault()} onClick={searchPrev}>
+              <button type="button" className="mm-find-btn" aria-label={t('find.previousMatch', { defaultValue: 'Previous match' })} title={t('find.previousMatch', { defaultValue: 'Previous match' })} disabled={searchResults.length === 0} onMouseDown={(e) => e.preventDefault()} onClick={searchPrev}>
                 <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 10l4-4 4 4"/></svg>
               </button>
-              <button type="button" className="mm-find-btn" aria-label="Next match" title="Next match" disabled={searchResults.length === 0} onMouseDown={(e) => e.preventDefault()} onClick={searchNext}>
+              <button type="button" className="mm-find-btn" aria-label={t('find.nextMatch', { defaultValue: 'Next match' })} title={t('find.nextMatch', { defaultValue: 'Next match' })} disabled={searchResults.length === 0} onMouseDown={(e) => e.preventDefault()} onClick={searchNext}>
                 <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg>
               </button>
-              <button type="button" className="mm-find-btn" aria-label="Close" title="Close" onMouseDown={(e) => e.preventDefault()} onClick={() => setSearchOpen(false)}>
+              <button type="button" className="mm-find-btn" aria-label={t('find.close', { defaultValue: 'Close' })} title={t('find.close', { defaultValue: 'Close' })} onMouseDown={(e) => e.preventDefault()} onClick={() => setSearchOpen(false)}>
                 <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/></svg>
               </button>
             </div>
@@ -3263,8 +3298,8 @@ export function DesktopMindMapEditor({
                 <input
                   ref={replaceRef}
                   className="mm-find-input"
-                  placeholder="Replace"
-                  aria-label="Replace"
+                  placeholder={t('find.replace', { defaultValue: 'Replace' })}
+                  aria-label={t('find.replace', { defaultValue: 'Replace' })}
                   value={replaceText}
                   onChange={(e) => setReplaceText(e.target.value)}
                   onKeyDown={(e) => {
@@ -3273,8 +3308,8 @@ export function DesktopMindMapEditor({
                     e.stopPropagation();
                   }}
                 />
-                <button type="button" className="mm-find-text-btn" title="Replace" disabled={!searchQuery.trim() || searchResults.length === 0} onMouseDown={(e) => e.preventDefault()} onClick={replaceCurrent}>Replace</button>
-                <button type="button" className="mm-find-text-btn" title="Replace All" disabled={!searchQuery.trim() || searchResults.length === 0} onMouseDown={(e) => e.preventDefault()} onClick={replaceAllMatches}>All</button>
+                <button type="button" className="mm-find-text-btn" title={t('find.replace', { defaultValue: 'Replace' })} disabled={!searchQuery.trim() || searchResults.length === 0} onMouseDown={(e) => e.preventDefault()} onClick={replaceCurrent}>{t('find.replace', { defaultValue: 'Replace' })}</button>
+                <button type="button" className="mm-find-text-btn" title={t('find.replaceAll', { defaultValue: 'Replace All' })} disabled={!searchQuery.trim() || searchResults.length === 0} onMouseDown={(e) => e.preventDefault()} onClick={replaceAllMatches}>{t('find.all', { defaultValue: 'All' })}</button>
               </div>
             )}
           </div>
@@ -3667,39 +3702,39 @@ export function DesktopMindMapEditor({
             className="mm-context-menu"
             style={{ left: contextMenuPos?.left ?? contextMenu.x, top: contextMenuPos?.top ?? contextMenu.y }}
           >
-            <div className="mm-context-header">{cmNode.text.substring(0, 30) || 'Node'}</div>
-            <button className="mm-context-item" onClick={() => { const f = findNode(root, contextMenu.nodeId); if (f) startEditing(f.node); setContextMenu(null); }}>Rename <kbd>{formatShortcut('node.rename', keyboardLayout)}</kbd></button>
-            <button className="mm-context-item" onClick={() => { addChild(contextMenu.nodeId); setContextMenu(null); }}>Add Child <kbd>{formatShortcut('node.addChild', keyboardLayout)}</kbd></button>
-            {cmIsRoot && <button className="mm-context-item" onClick={() => { addChild('root', 'left'); setContextMenu(null); }}>Add Left Child <kbd>{formatShortcut('node.addLeftChild', keyboardLayout)}</kbd></button>}
-            {!cmIsRoot && <button className="mm-context-item" onClick={() => { addSibling(contextMenu.nodeId); setContextMenu(null); }}>Add Sibling <kbd>{formatShortcut('node.addSibling', keyboardLayout)}</kbd></button>}
+            <div className="mm-context-header">{cmNode.text.substring(0, 30) || t('common.node', { defaultValue: 'Node' })}</div>
+            <button className="mm-context-item" onClick={() => { const f = findNode(root, contextMenu.nodeId); if (f) startEditing(f.node); setContextMenu(null); }}>{translateShortcutLabel('node.rename', t)} <kbd>{formatShortcut('node.rename', keyboardLayout)}</kbd></button>
+            <button className="mm-context-item" onClick={() => { addChild(contextMenu.nodeId); setContextMenu(null); }}>{t('menu.addChild', { defaultValue: 'Add Child' })} <kbd>{formatShortcut('node.addChild', keyboardLayout)}</kbd></button>
+            {cmIsRoot && <button className="mm-context-item" onClick={() => { addChild('root', 'left'); setContextMenu(null); }}>{t('context.addLeftChild', { defaultValue: 'Add Left Child' })} <kbd>{formatShortcut('node.addLeftChild', keyboardLayout)}</kbd></button>}
+            {!cmIsRoot && <button className="mm-context-item" onClick={() => { addSibling(contextMenu.nodeId); setContextMenu(null); }}>{t('menu.addSibling', { defaultValue: 'Add Sibling' })} <kbd>{formatShortcut('node.addSibling', keyboardLayout)}</kbd></button>}
             <div className="mm-context-divider" />
-            {cmHasChildren && <button className="mm-context-item" onClick={() => { toggleCollapse(contextMenu.nodeId); setContextMenu(null); }}>{cmNode.collapsed ? 'Expand' : 'Collapse'} <kbd>{formatShortcut('node.fold', keyboardLayout)}</kbd></button>}
-            <button className="mm-context-item" data-testid="context-notes" onClick={() => { openNotes(contextMenu.nodeId); setNotesOpen(true); setContextMenu(null); }}>Note <kbd>{formatShortcut('node.notesToggle', keyboardLayout)}</kbd></button>
+            {cmHasChildren && <button className="mm-context-item" onClick={() => { toggleCollapse(contextMenu.nodeId); setContextMenu(null); }}>{cmNode.collapsed ? t('context.expand', { defaultValue: 'Expand' }) : t('context.collapse', { defaultValue: 'Collapse' })} <kbd>{formatShortcut('node.fold', keyboardLayout)}</kbd></button>}
+            <button className="mm-context-item" data-testid="context-notes" onClick={() => { openNotes(contextMenu.nodeId); setNotesOpen(true); setContextMenu(null); }}>{t('context.note', { defaultValue: 'Note' })} <kbd>{formatShortcut('node.notesToggle', keyboardLayout)}</kbd></button>
             {onOpenFileLink && (
               <button className="mm-context-item" data-testid="context-link-vault" onClick={() => { openFileLinkPicker(contextMenu.nodeId); setContextMenu(null); }}>
-                {cmNode.link?.path ? 'Change File Link…' : 'Link to File…'} <kbd>{formatShortcut('node.linkFile', keyboardLayout)}</kbd>
+                {cmNode.link?.path ? t('context.changeFileLink', { defaultValue: 'Change File Link…' }) : t('context.linkToFile', { defaultValue: 'Link to File…' })} <kbd>{formatShortcut('node.linkFile', keyboardLayout)}</kbd>
               </button>
             )}
             {cmNode.link?.path && (
-              <button className="mm-context-item" onClick={() => { setNodeLink(contextMenu.nodeId, null); setContextMenu(null); }}>Remove File Link</button>
+              <button className="mm-context-item" onClick={() => { setNodeLink(contextMenu.nodeId, null); setContextMenu(null); }}>{t('context.removeFileLink', { defaultValue: 'Remove File Link' })}</button>
             )}
-            <button className="mm-context-item" data-testid="context-add-url" onClick={() => { setShowUrlDialog(true); setContextMenu(null); }}>Add URL… <kbd>{formatShortcut('node.url', keyboardLayout)}</kbd></button>
+            <button className="mm-context-item" data-testid="context-add-url" onClick={() => { setShowUrlDialog(true); setContextMenu(null); }}>{t('context.addUrl', { defaultValue: 'Add URL…' })} <kbd>{formatShortcut('node.url', keyboardLayout)}</kbd></button>
             <button className="mm-context-item" data-testid="context-add-image" onClick={() => {
               nodeImageTargetRef.current = contextMenu.nodeId;
               nodeImageInputRef.current?.click();
               setContextMenu(null);
-            }}>{cmNode.image?.thumb ? 'Replace Image…' : 'Add Image…'} <kbd>{formatShortcut('node.addImage', keyboardLayout)}</kbd></button>
+            }}>{cmNode.image?.thumb ? t('context.replaceImage', { defaultValue: 'Replace Image…' }) : t('context.addImage', { defaultValue: 'Add Image…' })} <kbd>{formatShortcut('node.addImage', keyboardLayout)}</kbd></button>
             {cmNode.image?.thumb && (
-              <button className="mm-context-item" data-testid="context-remove-image" onClick={() => { removeNodeImage(contextMenu.nodeId); setContextMenu(null); }}>Remove Image</button>
+              <button className="mm-context-item" data-testid="context-remove-image" onClick={() => { removeNodeImage(contextMenu.nodeId); setContextMenu(null); }}>{t('context.removeImage', { defaultValue: 'Remove Image' })}</button>
             )}
             <div className="mm-context-divider" />
-            <button className="mm-context-item" onClick={() => { setShowIconPicker(true); setContextMenu(null); }}>Icon <kbd>{formatShortcut('node.icons', keyboardLayout)}</kbd></button>
+            <button className="mm-context-item" onClick={() => { setShowIconPicker(true); setContextMenu(null); }}>{t('context.icon', { defaultValue: 'Icon' })} <kbd>{formatShortcut('node.icons', keyboardLayout)}</kbd></button>
             <button className="mm-context-item" onClick={() => {
               cmHasCheckbox ? toggleCheckbox(contextMenu.nodeId) : addCheckbox(contextMenu.nodeId);
               setContextMenu(null);
-            }}>{cmHasCheckbox ? (cmNode.checked ? 'Uncheck' : 'Check') : 'Add Checkbox'} <kbd>{formatShortcut('node.checkbox', keyboardLayout)}</kbd></button>
-            {cmHasCheckbox && <button className="mm-context-item" onClick={() => { removeCheckbox(contextMenu.nodeId); setContextMenu(null); }}>Remove Checkbox</button>}
-            <div className="mm-context-item mm-context-progress-row">Progress
+            }}>{cmHasCheckbox ? (cmNode.checked ? t('context.uncheck', { defaultValue: 'Uncheck' }) : t('context.check', { defaultValue: 'Check' })) : t('context.addCheckbox', { defaultValue: 'Add Checkbox' })} <kbd>{formatShortcut('node.checkbox', keyboardLayout)}</kbd></button>
+            {cmHasCheckbox && <button className="mm-context-item" onClick={() => { removeCheckbox(contextMenu.nodeId); setContextMenu(null); }}>{t('context.removeCheckbox', { defaultValue: 'Remove Checkbox' })}</button>}
+            <div className="mm-context-item mm-context-progress-row">{t('context.progress', { defaultValue: 'Progress' })}
               <div className="mm-context-progress-presets">
                 <span className={`mm-ctx-progress${cmNode.progress == null ? ' active' : ''}`} onClick={() => {
                   setNodeProgress(contextMenu.nodeId, null);
@@ -3711,18 +3746,18 @@ export function DesktopMindMapEditor({
                 }}>{pct}</span>))}
               </div><kbd>{formatShortcut('node.progress', keyboardLayout)}</kbd>
             </div>
-            <button className="mm-context-item" onClick={() => { setShowDateDialog(true); setContextMenu(null); }}>Date Planning <kbd>{formatShortcut('node.dates', keyboardLayout)}</kbd></button>
-            <button className="mm-context-item" onClick={() => { setShowTagDialog(true); setContextMenu(null); }}>Labels <kbd>{formatShortcut('node.labels', keyboardLayout)}</kbd></button>
+            <button className="mm-context-item" onClick={() => { setShowDateDialog(true); setContextMenu(null); }}>{t('context.datePlanning', { defaultValue: 'Date Planning' })} <kbd>{formatShortcut('node.dates', keyboardLayout)}</kbd></button>
+            <button className="mm-context-item" onClick={() => { setShowTagDialog(true); setContextMenu(null); }}>{t('context.labels', { defaultValue: 'Labels' })} <kbd>{formatShortcut('node.labels', keyboardLayout)}</kbd></button>
             <div className="mm-context-divider" />
-            {!cmIsRoot && cmCanMoveUp && <button className="mm-context-item" onClick={() => { moveNode(contextMenu.nodeId, 'up'); setContextMenu(null); }}>Move Up</button>}
-            {!cmIsRoot && cmCanMoveDown && <button className="mm-context-item" onClick={() => { moveNode(contextMenu.nodeId, 'down'); setContextMenu(null); }}>Move Down</button>}
-            <button className="mm-context-item" data-testid="context-copy" onClick={() => { copyNodeIds(contextTargetIds(contextMenu.nodeId)); setContextMenu(null); }}>Copy <kbd>{formatShortcut('edit.copy', keyboardLayout)}</kbd></button>
-            {!cmIsRoot && <button className="mm-context-item" data-testid="context-cut" onClick={() => { cutNodeIds(contextTargetIds(contextMenu.nodeId)); setContextMenu(null); }}>Cut <kbd>{formatShortcut('edit.cut', keyboardLayout)}</kbd></button>}
-            <button className="mm-context-item" data-testid="context-paste" onClick={() => { pasteNodeClipboard(contextMenu.nodeId, true); setContextMenu(null); }}>Paste <kbd>{formatShortcut('edit.paste', keyboardLayout)}</kbd></button>
-            {!cmIsRoot && <button className="mm-context-item" onClick={() => { duplicateNode(contextMenu.nodeId); setContextMenu(null); }}>Duplicate</button>}
-            <button className="mm-context-item" onClick={() => { resetNodePosition(contextMenu.nodeId); setContextMenu(null); }}>Reset Position <kbd>{formatShortcut('node.resetPosition', keyboardLayout)}</kbd></button>
-            <button className="mm-context-item" onClick={() => { autoAlignSubtree(contextMenu.nodeId); setContextMenu(null); }}>Auto-align subtree <kbd>{formatShortcut('node.autoAlign', keyboardLayout)}</kbd></button>
-            {!cmIsRoot && (<><div className="mm-context-divider" /><button className="mm-context-item mm-context-danger" onClick={() => { deleteNode(contextMenu.nodeId); setContextMenu(null); }}>Delete <kbd>{formatShortcut('node.delete', keyboardLayout)}</kbd></button></>)}
+            {!cmIsRoot && cmCanMoveUp && <button className="mm-context-item" onClick={() => { moveNode(contextMenu.nodeId, 'up'); setContextMenu(null); }}>{t('context.moveUp', { defaultValue: 'Move Up' })}</button>}
+            {!cmIsRoot && cmCanMoveDown && <button className="mm-context-item" onClick={() => { moveNode(contextMenu.nodeId, 'down'); setContextMenu(null); }}>{t('context.moveDown', { defaultValue: 'Move Down' })}</button>}
+            <button className="mm-context-item" data-testid="context-copy" onClick={() => { copyNodeIds(contextTargetIds(contextMenu.nodeId)); setContextMenu(null); }}>{translateShortcutLabel('edit.copy', t)} <kbd>{formatShortcut('edit.copy', keyboardLayout)}</kbd></button>
+            {!cmIsRoot && <button className="mm-context-item" data-testid="context-cut" onClick={() => { cutNodeIds(contextTargetIds(contextMenu.nodeId)); setContextMenu(null); }}>{translateShortcutLabel('edit.cut', t)} <kbd>{formatShortcut('edit.cut', keyboardLayout)}</kbd></button>}
+            <button className="mm-context-item" data-testid="context-paste" onClick={() => { pasteNodeClipboard(contextMenu.nodeId, true); setContextMenu(null); }}>{translateShortcutLabel('edit.paste', t)} <kbd>{formatShortcut('edit.paste', keyboardLayout)}</kbd></button>
+            {!cmIsRoot && <button className="mm-context-item" onClick={() => { duplicateNode(contextMenu.nodeId); setContextMenu(null); }}>{t('context.duplicate', { defaultValue: 'Duplicate' })}</button>}
+            <button className="mm-context-item" onClick={() => { resetNodePosition(contextMenu.nodeId); setContextMenu(null); }}>{t('context.resetPosition', { defaultValue: 'Reset Position' })} <kbd>{formatShortcut('node.resetPosition', keyboardLayout)}</kbd></button>
+            <button className="mm-context-item" onClick={() => { autoAlignSubtree(contextMenu.nodeId); setContextMenu(null); }}>{t('context.autoAlignSubtree', { defaultValue: 'Auto-align subtree' })} <kbd>{formatShortcut('node.autoAlign', keyboardLayout)}</kbd></button>
+            {!cmIsRoot && (<><div className="mm-context-divider" /><button className="mm-context-item mm-context-danger" onClick={() => { deleteNode(contextMenu.nodeId); setContextMenu(null); }}>{t('menu.delete', { defaultValue: 'Delete' })} <kbd>{formatShortcut('node.delete', keyboardLayout)}</kbd></button></>)}
           </div>
         </>);
       })()}
@@ -3970,16 +4005,16 @@ export function DesktopMindMapEditor({
               window.addEventListener('mousemove', onMove);
               window.addEventListener('mouseup', onUp);
             }}
-          ><span>Keyboard Shortcuts</span>
+          ><span>{t('shortcuts.panelTitle', { defaultValue: 'Keyboard Shortcuts' })}</span>
             <label
               className="mm-switch"
               style={{ marginLeft: 'auto' }}
               title={shortcutsPinned
-                ? 'Always on: the card stays on the canvas and reopens with the editor'
-                : 'Always on: off — a canvas click closes the card'}
+                ? t('shortcuts.alwaysOnPinned', { defaultValue: 'Always on: the card stays on the canvas and reopens with the editor' })
+                : t('shortcuts.alwaysOnUnpinned', { defaultValue: 'Always on: off — a canvas click closes the card' })}
               onMouseDown={(e) => e.stopPropagation()}
             >
-              <span className="mm-switch-label">Always on</span>
+              <span className="mm-switch-label">{t('shortcuts.alwaysOn', { defaultValue: 'Always on' })}</span>
               <input
                 type="checkbox"
                 role="switch"
@@ -3989,7 +4024,7 @@ export function DesktopMindMapEditor({
             </label>
             <button
               className="mm-btn-icon"
-              title="Close"
+              title={t('common.close', { defaultValue: 'Close' })}
               onMouseDown={(e) => e.stopPropagation()}
               onClick={() => {
                 // Closing by hand is an explicit "not now", so it clears the
@@ -4003,23 +4038,23 @@ export function DesktopMindMapEditor({
           <div className="mm-shortcuts-grid">
             {(['Nodes', 'Format', 'View', 'Edit', 'Find', 'File'] as const).map((group) => (
               <Fragment key={group}>
-                <div className="mm-shortcuts-group-label">{group}</div>
+                <div className="mm-shortcuts-group-label">{translateShortcutGroup(group, t)}</div>
                 {SHORTCUTS.filter((s) => s.group === group).map((s) => (
                   <div key={s.id} className="mm-shortcut-row">
                     <kbd className="mm-kbd">{formatShortcut(s.id, keyboardLayout)}</kbd>
-                    <span>{s.label}</span>
+                    <span>{translateShortcutLabel(s.id, t)}</span>
                   </div>
                 ))}
               </Fragment>
             ))}
             <Fragment>
-              <div className="mm-shortcuts-group-label">Selection</div>
+              <div className="mm-shortcuts-group-label">{t('shortcuts.groupSelection', { defaultValue: 'Selection' })}</div>
               {[
-                ['↑ ↓ ← →', 'Navigate (spatial)'],
-                ['⇧+Arrow', 'Multi-select'],
-                [isMac ? '⌘+Click' : 'Ctrl+Click', 'Toggle select'],
-                ['⇧+Drag', 'Rectangle select'],
-                ['Esc', 'Cancel / Clear'],
+                ['↑ ↓ ← →', t('shortcuts.navigateSpatial', { defaultValue: 'Navigate (spatial)' })],
+                ['⇧+Arrow', t('shortcuts.multiSelect', { defaultValue: 'Multi-select' })],
+                [isMac ? '⌘+Click' : 'Ctrl+Click', t('shortcuts.toggleSelect', { defaultValue: 'Toggle select' })],
+                ['⇧+Drag', t('shortcuts.rectangleSelect', { defaultValue: 'Rectangle select' })],
+                ['Esc', t('shortcuts.cancelClear', { defaultValue: 'Cancel / Clear' })],
               ].map(([k, v]) => (<div key={k} className="mm-shortcut-row"><kbd className="mm-kbd">{k}</kbd><span>{v}</span></div>))}
             </Fragment>
           </div>

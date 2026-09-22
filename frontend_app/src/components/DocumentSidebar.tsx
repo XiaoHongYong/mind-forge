@@ -4,6 +4,7 @@
  */
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
+import { useTranslation } from 'react-i18next';
 import { ChevronDown, ChevronRight, X } from 'lucide-react';
 import type { RecentFileEntry } from '../document/types';
 import { formatRelativeModified } from '../document/relativeTime';
@@ -59,9 +60,9 @@ export interface DocumentSidebarProps {
   onClose?: () => void;
 }
 
-function firstLine(text: string): string {
+function firstLine(text: string, untitled: string): string {
   const line = text.split('\n')[0]?.trim() ?? '';
-  return line || 'Untitled';
+  return line || untitled;
 }
 
 export function DocumentSidebar({
@@ -80,6 +81,7 @@ export function DocumentSidebar({
   onSelectNode,
   onClose,
 }: DocumentSidebarProps) {
+  const { t } = useTranslation();
   const [width, setWidth] = useState(readStoredWidth);
   const [resizing, setResizing] = useState(false);
   const widthRef = useRef(width);
@@ -118,10 +120,10 @@ export function DocumentSidebar({
   return (
     <aside
       className={`mm-doc-side${resizing ? ' is-resizing' : ''}`}
-      aria-label="Documents"
+      aria-label={t('sidebar.documents')}
       style={{ width, flexBasis: width }}
     >
-      <div className="mm-doc-side-tabs" role="tablist" aria-label="Sidebar">
+      <div className="mm-doc-side-tabs" role="tablist" aria-label={t('sidebar.tabs')}>
         <button
           type="button"
           role="tab"
@@ -129,7 +131,7 @@ export function DocumentSidebar({
           className={`mm-doc-side-tab${tab === 'recent' ? ' is-active' : ''}`}
           onClick={() => onTabChange('recent')}
         >
-          Recent
+          {t('sidebar.recent')}
         </button>
         <button
           type="button"
@@ -138,15 +140,15 @@ export function DocumentSidebar({
           className={`mm-doc-side-tab${tab === 'outline' ? ' is-active' : ''}`}
           onClick={() => onTabChange('outline')}
         >
-          Outline
+          {t('sidebar.outline')}
         </button>
         {onClose && (
           <button
             type="button"
             className="mm-doc-side-close"
             onClick={onClose}
-            title="Close sidebar"
-            aria-label="Close sidebar"
+            title={t('sidebar.close')}
+            aria-label={t('sidebar.close')}
           >
             <X size={14} strokeWidth={2.5} />
           </button>
@@ -156,7 +158,7 @@ export function DocumentSidebar({
         className="mm-doc-side-resize"
         role="separator"
         aria-orientation="vertical"
-        aria-label="Resize sidebar"
+        aria-label={t('sidebar.resize')}
         aria-valuemin={MIN_WIDTH}
         aria-valuemax={MAX_WIDTH}
         aria-valuenow={Math.round(width)}
@@ -211,7 +213,7 @@ export function DocumentSidebar({
       {tab === 'recent' ? (
         <div className="mm-doc-side-body" role="tabpanel">
           {orderedRecent.length === 0 ? (
-            <p className="mm-doc-side-empty">No recent files yet.</p>
+            <p className="mm-doc-side-empty">{t('sidebar.emptyRecent')}</p>
           ) : (
             <ul className="mm-doc-side-recent">
               {orderedRecent.map((entry) => {
@@ -234,8 +236,8 @@ export function DocumentSidebar({
                   <button
                     type="button"
                     className="mm-doc-side-recent-remove"
-                    aria-label={`Remove ${entry.title} from recent`}
-                    title="Remove from recent"
+                    aria-label={t('sidebar.removeRecent', { title: entry.title })}
+                    title={t('sidebar.removeRecentTitle')}
                     onClick={() => onRemoveRecent(entry.path)}
                   >
                     <X size={14} strokeWidth={2} />
@@ -246,7 +248,7 @@ export function DocumentSidebar({
             </ul>
           )}
           {!canReopenByPath && orderedRecent.length > 0 && (
-            <p className="mm-doc-side-hint">Re-opening by path needs the desktop app.</p>
+            <p className="mm-doc-side-hint">{t('sidebar.reopenHint')}</p>
           )}
           {recentError && <p className="mm-doc-side-error">{recentError}</p>}
         </div>
@@ -261,7 +263,7 @@ export function DocumentSidebar({
               onSelectNode={onSelectNode}
             />
           ) : (
-            <p className="mm-doc-side-empty">No document open.</p>
+            <p className="mm-doc-side-empty">{t('sidebar.emptyOutline')}</p>
           )}
         </div>
       )}
@@ -353,11 +355,12 @@ function OutlineNode({
   onSelect: (nodeId: string) => void;
   rowRefs: MutableRefObject<Map<string, HTMLDivElement>>;
 }) {
+  const { t } = useTranslation();
   const children = node.children ?? [];
   const hasChildren = children.length > 0;
   const isCollapsed = collapsed.has(node.id);
   const selected = node.id === selectedNodeId;
-  const label = firstLine(editing?.nodeId === node.id ? editing.text : node.text);
+  const label = firstLine(editing?.nodeId === node.id ? editing.text : node.text, t('common.untitled'));
 
   return (
     <div role="none">

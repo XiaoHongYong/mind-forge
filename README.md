@@ -1,82 +1,127 @@
 # MindForge
 
-Local-first desktop mind-mapping. Open and save ordinary files on your machine —
+Local desktop mind-mapping. Open and save ordinary files on your machine —
 no account, no cloud, no telemetry.
 
 Native lossless format: `.mmforge`. Also opens and exports FreeMind / FreePlane
 (`.mm`), WiseMapping (`.wxml`), XMind (`.xmind`), and Markdown (`.md`).
+PNG / PDF export are available from the File menu.
+
+> 中文：[README.zh-CN.md](README.zh-CN.md)
+
+## Features
+
+- **File documents, not a vault** — New / Open / Save / Save As / Recent; paths
+  stay on disk. Same absolute path opens as one tab (no duplicate buffers).
+- **Multi-tab editor** — VS Code–style tabs with dirty indicators; session
+  restore after quit (saved paths reopen; unsaved trees restore from app-data
+  backups when the on-disk hash still matches).
+- **Left sidebar** — Recent files and the live document outline (select /
+  scroll with the canvas).
+- **Right format panel** — Node fill / border / branch colour, fonts, map
+  defaults, colour themes, structure (mind map ↔ org chart).
+- **Node content** — Notes (Markdown), icons, checkbox, progress, date
+  planning, URL, labels, images, file links, and attachments.
+- **Find & replace** across the map; focus mode; colour / icon trays; zoom /
+  fit; undo / redo; copy–cut–paste of subtrees.
+- **UI language** — English and 简体中文 (follow system, or pin in Settings).
+- **Keyboard layouts** — Closed `FreeMind` and `Mac` layouts (Settings →
+  Interface); native menu bar mirrors the modifier-based subset.
+- **Appearance** — Light / dark, accent colour, canvas background, toolbar
+  density (Lean / Standard / Large).
 
 ## Architecture Overview
 
 Core components:
 
-1. `frontend_app/` — React + TypeScript editor and document session
-2. `desktop/src-tauri/` — Rust desktop host and user-path file IO
+1. `frontend_app/` — React + TypeScript editor, i18n, and document session
+2. `desktop/src-tauri/` — Rust / Tauri 2 host and user-path file IO
 3. Local filesystem — plaintext `.mmforge` / interchange files
 
 High-level flow:
 
-1. The app opens in the editor. Recent files and the document outline live in the left sidebar; New / Open / Save stay in the editor.
-2. The editor holds a `DocumentSession` in memory.
-3. Save writes the file back to the chosen path (or Save As).
+1. Launch opens the editor (no separate home screen). Recent files and the
+   outline live in the left sidebar; New / Open / Save stay in the editor and
+   native menus.
+2. Each open buffer is a `DocumentSession` (one tab) held in memory.
+3. Save writes bytes to the chosen path (or Save As). Export serializes to an
+   interchange or image format via a target dialog.
+4. Desktop file IO uses native dialogs plus Tauri `read_user_file` /
+   `write_user_file`; the webview FS ACL stays scoped to app directories.
 
 Related notes:
 
 - [`docs/file-document-architecture.md`](docs/file-document-architecture.md)
 - [`docs/project-structure-and-build.md`](docs/project-structure-and-build.md)
+- [`scripts/README.md`](scripts/README.md) — i18n extract / cross-platform build
 - [`SECURITY.md`](SECURITY.md)
 
 ## Getting Started
-
-One-command setup (Windows PowerShell):
-
-```powershell
-.\scripts\setup-desktop.ps1
-```
-
-One-command setup (Linux/macOS/WSL shell):
-
-```bash
-bash scripts/setup-desktop.sh
-```
-
-Optional modes:
-
-```powershell
-.\scripts\setup-desktop.ps1 -Mode dev
-.\scripts\setup-desktop.ps1 -Mode build
-```
-
-```bash
-bash scripts/setup-desktop.sh dev
-bash scripts/setup-desktop.sh build
-```
 
 Prerequisites:
 
 - Node.js 20+
 - pnpm 10+
 - Rust stable toolchain
-- platform prerequisites required by Tauri
+- platform prerequisites required by Tauri 2
 
 Check prerequisites:
 
-```powershell
+```bash
 node -v
 pnpm -v
 rustc -V
 cargo -V
 ```
 
-Install, build, and run:
+### One-command local run
+
+From the repository root:
 
 ```bash
-pnpm --dir frontend_app install
-pnpm --dir frontend_app build
-pnpm --dir frontend_app tauri info
-pnpm --dir frontend_app tauri:dev
-pnpm --dir frontend_app tauri:build
+./run.sh              # Tauri desktop (dev); installs deps if needed
+./run.sh app          # frontend Vite only
+./run.sh --install    # force pnpm install first
 ```
+
+Equivalent pnpm entries:
+
+```bash
+pnpm install
+pnpm tauri:dev        # desktop
+pnpm dev:app          # Vite only
+pnpm build:app
+pnpm test:app
+pnpm tauri:build
+```
+
+### Cross-platform release build
+
+`scripts/build/` probes Xcode / Android SDK·NDK / JDK / Rust / Docker and builds
+targets that are ready on this machine (mac / windows / linux / android).
+Android needs a one-time `tauri android init` (`--init-mobile`). iOS is not
+supported. Windows packages need a Windows host or CI.
+
+```bash
+./run.sh build --detect          # probe only
+./run.sh build                   # native desktop for this host
+./run.sh build --all             # every target ready here
+./run.sh build --targets mac,android --init-mobile
+pnpm build:detect
+pnpm build:all
+```
+
+Details: [`scripts/build/README.md`](scripts/build/README.md).
+
+### UI i18n
+
+```bash
+pnpm i18n:extract                # extract keys + pending zh-CN report
+pnpm i18n:pending                # list pending without re-extract
+```
+
+Agent workflow: [`.cursor/skills/i18n-translate/SKILL.md`](.cursor/skills/i18n-translate/SKILL.md).
+More: [`scripts/README.md`](scripts/README.md).
 
 ### macOS packaging
 
@@ -94,12 +139,13 @@ pnpm --dir frontend_app tauri:build
 - Released DMGs are typically unsigned. After installing, clear quarantine if needed:
 
   ```bash
-  xattr -dr com.apple.quarantine "/Applications/MindForge Local-Only.app"
+  xattr -dr com.apple.quarantine "/Applications/MindForge.app"
   ```
 
 ### Linux packaging
 
-- Output: `desktop/src-tauri/target/release/bundle/appimage/*.AppImage`
+- Default Tauri targets include AppImage (`desktop/src-tauri/target/release/bundle/`).
+- Snap metadata lives under `desktop/snap/`.
 - Build-host packages (Debian/Ubuntu):
 
   ```bash
@@ -107,13 +153,11 @@ pnpm --dir frontend_app tauri:build
     libayatana-appindicator3-dev librsvg2-dev patchelf
   ```
 
-- Tauri does not cross-compile Linux from macOS/Windows. From another OS:
+- On a non-Linux host, use the build script’s Linux path (Docker when available):
 
   ```bash
-  pnpm run build:linux
+  ./run.sh build --targets linux
   ```
-
-  Writes under `dist-linux/` (amd64; emulated on Apple Silicon).
 
 ### Windows notes
 
@@ -122,7 +166,7 @@ pnpm --dir frontend_app tauri:build
 
 ```powershell
 Remove-Item -Recurse -Force node_modules
-pnpm --dir frontend_app install
+pnpm install
 ```
 
 - If pnpm ignores build scripts:
@@ -149,6 +193,7 @@ resolves to ⌘ on macOS and Ctrl elsewhere. Press <kbd>F1</kbd> (FreeMind) /
 | Notes | F3 | ⌘⇧K |
 | Edit notes | Ctrl+E | ⌘E |
 | Add image | Alt+K | ⌥K |
+| Link to file | Ctrl+K | ⌘K |
 | Attach file | F6 | ⌘⇧O |
 | Fold / Unfold | Space | Space |
 | Reset position | R | R |
@@ -165,11 +210,13 @@ resolves to ⌘ on macOS and Ctrl elsewhere. Press <kbd>F1</kbd> (FreeMind) /
 | **View** | | |
 | Go to root | Home | H |
 | Focus mode | F5 / F | ⌘⇧F |
+| Toggle structure | Ctrl+Shift+M | ⌘⇧M |
 | Zoom in | + / Alt+↓ | ⌘+ |
 | Zoom out | - / Alt+↑ | ⌘− |
 | Fit to window | F8 | ⌘⇧8 |
 | Toggle colour tray | Ctrl+Shift+1 | ⌘⇧1 |
 | Toggle icon tray | Ctrl+Shift+2 | ⌘⇧2 |
+| Toggle format sidebar | Ctrl+Shift+3 | ⌘⇧3 |
 | **Edit** | | |
 | Copy | Ctrl+C | ⌘C |
 | Cut | Ctrl+X | ⌘X |
@@ -180,6 +227,7 @@ resolves to ⌘ on macOS and Ctrl elsewhere. Press <kbd>F1</kbd> (FreeMind) /
 | Search | Ctrl+F | ⌘F |
 | Shortcuts (this table) | F1 | ⌘/ |
 | **File** | | |
+| Open | Ctrl+O | ⌘O |
 | Save | Ctrl+S | ⌘S |
 
 Source of truth: `frontend_app/src/shortcuts/registry.ts`. The native menu bar
@@ -191,28 +239,20 @@ they do not steal typing focus.
 ## Validation
 
 ```bash
-node scripts/version-check.js
-node scripts/check_foss_saas_residue.mjs
-node scripts/check_frontend_offline_parity.mjs
+pnpm test:app                    # frontend vitest
+pnpm --dir frontend_app build    # typecheck + production bundle
 ```
 
-Workflow-style checks:
-
-```powershell
-.\scripts\test-workflow.ps1
-```
-
-```bash
-./scripts/test-workflow.sh
-```
+Cross-layer changes: also run `cargo check` under `desktop/src-tauri`.
 
 ## Release Outputs
 
 Typical artifacts (plus `.sha256` checksums when published):
 
 - macOS DMG (universal when built that way)
-- Windows `.exe` installer
-- Linux AppImage
+- Windows NSIS `.exe` installer
+- Linux AppImage (and Snap where configured)
+- Android APK / AAB when mobile is initialized and built
 
 Build workflow configuration lives in `.github/workflows/` when present.
 
@@ -221,8 +261,9 @@ Build workflow configuration lives in `.github/workflows/` when present.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md)
 - [`CREDITS.md`](CREDITS.md)
 
-Expectations: focused changes, local-first / no telemetry, no secrets in logs,
-clear notes for user-visible behavior.
+Expectations: focused changes, local / no telemetry, no secrets in logs,
+clear notes for user-visible behavior. Keep frontend and desktop version /
+bundle metadata in sync (currently `0.6.2`).
 
 ## License
 

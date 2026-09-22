@@ -1,6 +1,6 @@
 import { isTauri } from '../storage';
 
-export const DEFAULT_WINDOW_CAPTION = 'MindForge — Local Mind Maps';
+export const DEFAULT_WINDOW_CAPTION = 'MindForge — Mind Maps';
 
 /** Sets the OS window caption (Tauri) and `document.title` (browser). */
 export async function setWindowCaption(caption: string): Promise<void> {

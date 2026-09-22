@@ -1,4 +1,5 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { DocumentTabBar } from '../components/DocumentTabBar';
 import { DocumentSidebar, type DocumentSidebarTab } from '../components/DocumentSidebar';
 import { DesktopMindMapEditor } from '../components/MindMapEditor';
@@ -16,6 +17,8 @@ import { EXPORT_FORMATS, type ExportFormat } from '../utils/exportFormats';
 import { useUiStore } from '../store/ui';
 
 export function EditorPage() {
+  const { t } = useTranslation();
+  const untitled = t('common.untitled', { defaultValue: 'Untitled' });
   const session = useDocumentStore((s) => s.session);
   const sessions = useDocumentStore((s) => s.sessions);
   const activeId = useDocumentStore((s) => s.activeId);
@@ -47,7 +50,7 @@ export function EditorPage() {
   const selectionEpoch = useRef(0);
   const notifiedSelectionEpoch = useRef(-1);
   const [editorKey, setEditorKey] = useState(0);
-  const [title, setTitle] = useState(session?.title ?? 'Untitled');
+  const [title, setTitle] = useState(session?.title ?? untitled);
   const [initialTree, setInitialTree] = useState<MindMapTree | null>(session?.tree ?? null);
   const [initialDirty, setInitialDirty] = useState(Boolean(session?.dirty));
   const [currentTree, setCurrentTree] = useState<MindMapTree | null>(session?.tree ?? null);
@@ -65,7 +68,7 @@ export function EditorPage() {
     formatId: DocumentSession['formatId'];
   }>({
     path: session?.path ?? null,
-    title: session?.title ?? 'Untitled',
+    title: session?.title ?? untitled,
     tree: session?.tree ?? null,
     formatId: session?.formatId ?? 'mmforge',
   });
@@ -81,7 +84,7 @@ export function EditorPage() {
     if (liveEdit) setLiveEdit(null);
   }
 
-  const captionLabel = session?.path ? fileName(session.path) : (title || 'Untitled');
+  const captionLabel = session?.path ? fileName(session.path) : (title || untitled);
 
   useEffect(() => {
     void setWindowCaption(documentWindowCaption(captionLabel));
@@ -216,14 +219,16 @@ export function EditorPage() {
       setCurrentTree(saved.tree);
       // Do not touch initialTree / editorKey — undo history must survive Save.
       dirtyRef.current = false;
-      setSaveMsg(saved.path ? 'Saved' : 'Downloaded');
+      setSaveMsg(saved.path
+        ? t('editor.saved', { defaultValue: 'Saved' })
+        : t('editor.downloaded', { defaultValue: 'Downloaded' }));
       setTimeout(() => setSaveMsg(''), 3000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Save failed');
+      setError(err instanceof Error ? err.message : t('editor.saveFailed', { defaultValue: 'Save failed' }));
     } finally {
       setSaving(false);
     }
-  }, [save, title]);
+  }, [save, title, t]);
 
   const handleSaveAs = useCallback(async () => {
     if (!currentTree) return;
@@ -234,14 +239,16 @@ export function EditorPage() {
       setTitle(saved.title);
       setCurrentTree(saved.tree);
       dirtyRef.current = false;
-      setSaveMsg(saved.path ? 'Saved' : 'Downloaded');
+      setSaveMsg(saved.path
+        ? t('editor.saved', { defaultValue: 'Saved' })
+        : t('editor.downloaded', { defaultValue: 'Downloaded' }));
       setTimeout(() => setSaveMsg(''), 3000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Save As failed');
+      setError(err instanceof Error ? err.message : t('editor.saveAsFailed', { defaultValue: 'Save As failed' }));
     } finally {
       setSaving(false);
     }
-  }, [currentTree, saveAs, title]);
+  }, [currentTree, saveAs, title, t]);
 
   const handleNew = useCallback(async () => {
     commitEditorToStore();
@@ -273,9 +280,12 @@ export function EditorPage() {
 
     const fresh = useDocumentStore.getState().sessions.find((s) => s.id === id) ?? target;
     if (fresh.dirty) {
-      const label = fresh.path ? fileName(fresh.path) : (fresh.title || 'Untitled');
+      const label = fresh.path ? fileName(fresh.path) : (fresh.title || untitled);
       const discard = window.confirm(
-        `"${label}" has unsaved changes. Close without saving?`,
+        t('editor.closeUnsaved', {
+          title: label,
+          defaultValue: '"{{title}}" has unsaved changes. Close without saving?',
+        }),
       );
       if (!discard) return;
       try {
@@ -288,7 +298,7 @@ export function EditorPage() {
     const next = closeSession(id);
     await flushWorkspaceSave();
     if (!next) return;
-  }, [closeSession, commitEditorToStore]);
+  }, [closeSession, commitEditorToStore, t, untitled]);
 
   const handleOpenRecent = useCallback(async (path: string) => {
     setRecentBusy(true);
@@ -505,7 +515,7 @@ export function EditorPage() {
             onDirtyChange={handleDirtyChange}
             exportFormats={EXPORT_FORMATS}
             onExport={handleExport}
-            versionLabel={session.path ? fileName(session.path) : 'Untitled'}
+            versionLabel={session.path ? fileName(session.path) : untitled}
             versionTooltip={session.path ?? 'Not saved yet'}
             onTreeChange={setCurrentTree}
             onSelectionChange={handleSelectionChange}

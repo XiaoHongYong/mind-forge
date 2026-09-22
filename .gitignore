@@ -74,6 +74,7 @@ RELEASE_PROCESS.md
 /scripts/*.bak*
 /scripts/*.tmp
 /scripts/*.orig
+/scripts/**/.cache/
 
 # Local copilot instructions
 .github/copilot-instructions.md

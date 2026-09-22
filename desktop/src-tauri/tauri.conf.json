@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/tauri-v2/crates/tauri-cli/schema.json",
-  "productName": "MindForge Local-Only",
+  "productName": "MindForge",
   "version": "0.6.2",
   "identifier": "com.mindforge.desktop",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "MindForge — Local Mind Maps",
+        "title": "MindForge — Mind Maps",
         "width": 1280,
         "height": 860,
         "minWidth": 1024,

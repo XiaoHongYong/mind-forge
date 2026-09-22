@@ -1,4 +1,5 @@
 import { useCallback, useState, type MouseEvent } from 'react';
+import { useTranslation } from 'react-i18next';
 import { PanelLeft, PanelRight, Plus, X } from 'lucide-react';
 import type { DocumentSession } from '../document/types';
 import './DocumentTabBar.css';
@@ -15,11 +16,11 @@ export interface DocumentTabBarProps {
   onToggleRightSidebar: () => void;
 }
 
-function tabLabel(session: DocumentSession): string {
+function tabLabel(session: DocumentSession, untitled: string): string {
   if (session.path) {
     return session.path.split(/[/\\]/).pop() ?? session.path;
   }
-  return session.title || 'Untitled';
+  return session.title || untitled;
 }
 
 export function DocumentTabBar({
@@ -33,7 +34,9 @@ export function DocumentTabBar({
   rightSidebarOpen,
   onToggleRightSidebar,
 }: DocumentTabBarProps) {
+  const { t } = useTranslation();
   const [hoverCloseId, setHoverCloseId] = useState<string | null>(null);
+  const untitled = t('common.untitled', { defaultValue: 'Untitled' });
 
   const handleCloseClick = useCallback((e: MouseEvent, id: string) => {
     e.stopPropagation();
@@ -49,12 +52,19 @@ export function DocumentTabBar({
 
   if (sessions.length === 0) return null;
 
+  const leftLabel = leftSidebarOpen
+    ? t('tabs.hideLeftSidebar', { defaultValue: 'Hide left sidebar' })
+    : t('tabs.showLeftSidebar', { defaultValue: 'Show left sidebar' });
+  const rightLabel = rightSidebarOpen
+    ? t('tabs.hideRightSidebar', { defaultValue: 'Hide right sidebar' })
+    : t('tabs.showRightSidebar', { defaultValue: 'Show right sidebar' });
+
   return (
-    <div className="mm-doc-tabs" role="tablist" aria-label="Open documents">
+    <div className="mm-doc-tabs" role="tablist" aria-label={t('tabs.openDocuments', { defaultValue: 'Open documents' })}>
       <div className="mm-doc-tabs-scroll">
         {sessions.map((session) => {
           const active = session.id === activeId;
-          const label = tabLabel(session);
+          const label = tabLabel(session, untitled);
           const showCloseIcon = !session.dirty || hoverCloseId === session.id;
           return (
             <button
@@ -71,14 +81,14 @@ export function DocumentTabBar({
               <span
                 className="mm-doc-tab-close"
                 role="presentation"
-                title="Close"
+                title={t('tabs.close', { defaultValue: 'Close' })}
                 onClick={(e) => handleCloseClick(e, session.id)}
                 onMouseEnter={() => setHoverCloseId(session.id)}
                 onMouseLeave={() => setHoverCloseId((cur) => (cur === session.id ? null : cur))}
               >
                 {showCloseIcon
                   ? <X size={12} strokeWidth={2} />
-                  : <span className="mm-doc-tab-dirty" aria-label="Unsaved" />}
+                  : <span className="mm-doc-tab-dirty" aria-label={t('tabs.unsaved', { defaultValue: 'Unsaved' })} />}
               </span>
             </button>
           );
@@ -88,8 +98,8 @@ export function DocumentTabBar({
         type="button"
         className="mm-doc-tab-new"
         onClick={onNew}
-        title="New file"
-        aria-label="New file"
+        title={t('tabs.newFile', { defaultValue: 'New file' })}
+        aria-label={t('tabs.newFile', { defaultValue: 'New file' })}
       >
         <Plus size={14} strokeWidth={2} />
       </button>
@@ -97,8 +107,8 @@ export function DocumentTabBar({
         type="button"
         className={`mm-doc-tab-toggle${leftSidebarOpen ? ' is-active' : ''}`}
         onClick={onToggleLeftSidebar}
-        title={leftSidebarOpen ? 'Hide left sidebar' : 'Show left sidebar'}
-        aria-label={leftSidebarOpen ? 'Hide left sidebar' : 'Show left sidebar'}
+        title={leftLabel}
+        aria-label={leftLabel}
         aria-pressed={leftSidebarOpen}
       >
         <PanelLeft size={14} strokeWidth={2} />
@@ -107,8 +117,8 @@ export function DocumentTabBar({
         type="button"
         className={`mm-doc-tab-toggle${rightSidebarOpen ? ' is-active' : ''}`}
         onClick={onToggleRightSidebar}
-        title={rightSidebarOpen ? 'Hide right sidebar' : 'Show right sidebar'}
-        aria-label={rightSidebarOpen ? 'Hide right sidebar' : 'Show right sidebar'}
+        title={rightLabel}
+        aria-label={rightLabel}
         aria-pressed={rightSidebarOpen}
       >
         <PanelRight size={14} strokeWidth={2} />

@@ -1,10 +1,12 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { applyLocalePreference, type AppLocale } from '../i18n';
 import { isMac } from '../platform/isMac';
 
 export type KeyboardLayoutName = 'freemind' | 'mac';
 export type DensityPreset = 'lean' | 'standard' | 'large';
 export type TrayPosition = 'top' | 'bottom' | 'left' | 'right';
+export type { AppLocale };
 
 interface UiState {
   /**
@@ -16,6 +18,13 @@ interface UiState {
    */
   keyboardLayout: KeyboardLayoutName | null;
   setKeyboardLayout: (layout: KeyboardLayoutName | null) => void;
+
+  /**
+   * UI language preference. `null` = follow the OS (`navigator.language`)
+   * when a bundled translation exists — same pattern as `keyboardLayout`.
+   */
+  locale: AppLocale | null;
+  setLocale: (locale: AppLocale | null) => void;
 
   /** Lean / Standard / Large — see docs/ui-rework-plan.md §2.1. */
   densityPreset: DensityPreset;
@@ -74,6 +83,12 @@ export const useUiStore = create<UiState>()(
     (set) => ({
       keyboardLayout: null,
       setKeyboardLayout: (keyboardLayout) => set({ keyboardLayout }),
+
+      locale: null,
+      setLocale: (locale) => {
+        set({ locale });
+        void applyLocalePreference(locale);
+      },
 
       densityPreset: 'standard',
       setDensityPreset: (densityPreset) => set((state) => {
