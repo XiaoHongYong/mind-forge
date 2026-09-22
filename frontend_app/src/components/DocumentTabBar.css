@@ -1,4 +1,4 @@
-/* VS Code–style document tab bar sitting above the editor toolbar. */
+/* Document tab bar sitting under the editor toolbar. */
 
 .mm-doc-tabs {
   display: flex;

@@ -288,7 +288,7 @@ export function DesktopMindMapEditor({
   onDeleteNodeAttachment,
   onLoadNodeAttachmentPreview,
   documentPath, linkableFiles, linkableFilesLoading, onRequestLinkableFiles, onOpenFileLink,
-  onNewDocument, onOpenDocument, onSaveAsDocument, sidePanel, onShowDocumentPanel,
+  onNewDocument, onOpenDocument, onSaveAsDocument, sidePanel, documentTabs, onShowDocumentPanel,
   onDirtyChange,
 }: MindMapEditorProps) {
   const themeMode = useThemeStore((s) => s.mode);
@@ -2385,8 +2385,21 @@ export function DesktopMindMapEditor({
           setNotesOpen((v) => { if (!v) openNotes(selectedId); return !v; });
           break;
         case 'node.delete':
+        case 'edit.delete': {
+          const focus = document.activeElement as HTMLElement | null;
+          const textOwnsEdit = notesOpen || editingId != null
+            || focus?.tagName === 'INPUT'
+            || focus?.tagName === 'TEXTAREA'
+            || Boolean(focus?.isContentEditable);
+          // Menu Delete accelerator would otherwise eat the key in a text
+          // field; forward it as a character delete instead of removing a node.
+          if (textOwnsEdit) {
+            document.execCommand('forwardDelete');
+            break;
+          }
           hasBulk ? bulkDelete() : deleteNode(selectedId);
           break;
+        }
         case 'edit.undo':
           undo();
           break;
@@ -2824,9 +2837,23 @@ export function DesktopMindMapEditor({
 
   // Shared between the nav row (lean/standard) and the Home tab's File
   // group (large).
+  const openBtn = (
+    <button
+      className="mm-btn mm-essential"
+      data-label="Open"
+      data-shortcut={formatButtonShortcut('file.open', keyboardLayout)}
+      onClick={() => onOpenDocument?.()}
+      disabled={!onOpenDocument}
+      title={`Open… (${formatShortcut('file.open', keyboardLayout)})`}
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+      </svg>
+    </button>
+  );
   const saveBtn = (
     <button
-      className={`mm-btn mm-save-btn${isDirty ? ' mm-save-btn--dirty' : ''}${saving ? ' mm-save-btn--saving' : ''}${error ? ' mm-save-btn--err' : ''}${saveMsg ? ' mm-save-btn--ok' : ''}`}
+      className={`mm-btn mm-save-btn mm-essential${isDirty ? ' mm-save-btn--dirty' : ''}${saving ? ' mm-save-btn--saving' : ''}${error ? ' mm-save-btn--err' : ''}${saveMsg ? ' mm-save-btn--ok' : ''}`}
       data-label="Save"
       data-shortcut={formatButtonShortcut('file.save', keyboardLayout)}
       onClick={handleSave}
@@ -2890,17 +2917,14 @@ export function DesktopMindMapEditor({
 
       {/* ── Toolbar ─────────────────────────────────────────────────────── */}
       {!isMobile && <div className="mm-toolbar">
-        <div className="mm-toolbar-nav">
-          <div className="mm-toolbar-left">
-            {saveBtn}
-          </div>
-          <div className="mm-toolbar-center" aria-hidden />
-          {densityPreset === 'large' && (
+        {densityPreset === 'large' && (
+          <div className="mm-toolbar-nav">
+            <div className="mm-toolbar-center" aria-hidden />
             <div className="mm-toolbar-nav-end">
               {formatSidebarBtn}
             </div>
-          )}
-        </div>
+          </div>
+        )}
         {densityPreset === 'large' && (
           <div className="mm-ribbon-tabs" role="tablist" aria-label="Toolbar tabs">
             {([['home', 'Home'], ['insert', 'Insert'], ['view', 'View']] as const).map(([tab, label]) => (
@@ -2940,6 +2964,9 @@ export function DesktopMindMapEditor({
               e.currentTarget.value = '';
             }}
           />
+          {(densityPreset !== 'large' || activeRibbonTab === 'home') && (
+            toolbarGroup('File', <>{openBtn}{saveBtn}</>, 'home')
+          )}
           {(densityPreset !== 'large' || activeRibbonTab === 'home') && (
           <div className="mm-toolbar-group" data-ribbon-tab="home">
             <span className="mm-toolbar-group-label">Edit</span>
@@ -3005,7 +3032,7 @@ export function DesktopMindMapEditor({
                 className="mm-btn"
                 data-label="Attach"
                 data-shortcut={formatButtonShortcut('node.attachFile', keyboardLayout)}
-                // The same picker the F6 shortcut and the Node menu open. This
+                // The same picker the F6 shortcut and the Insert menu open. This
                 // once pointed at the image-only input, so the button accepted
                 // pictures and nothing else.
                 onClick={() => nodeAttachmentInputRef.current?.click()}
@@ -3145,6 +3172,8 @@ export function DesktopMindMapEditor({
           )}
         </div>
       </div>}
+
+      {documentTabs}
 
       <ThemePanel showButton={false} />
 

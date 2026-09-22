@@ -48,6 +48,8 @@ export interface MindMapEditorProps {
   onSaveAsDocument?: () => void;
   /** Panel under the toolbar, to the left of the canvas (recent files / outline). */
   sidePanel?: ReactNode;
+  /** Document tabs, rendered directly under the toolbar. */
+  documentTabs?: ReactNode;
   /** App View menu: show the recent list or the outline. */
   onShowDocumentPanel?: (tab: 'recent' | 'outline') => void;
   /** Fired whenever the editor's dirty flag changes. */

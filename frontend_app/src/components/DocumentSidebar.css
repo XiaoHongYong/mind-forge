@@ -146,6 +146,7 @@
 }
 
 .mm-doc-side-recent-title,
+.mm-doc-side-recent-meta,
 .mm-doc-side-recent-path {
   display: block;
   overflow: hidden;
@@ -158,10 +159,16 @@
   font-weight: 550;
 }
 
-.mm-doc-side-recent-path {
+.mm-doc-side-recent-meta {
   margin-top: 2px;
   font-size: 11px;
-  opacity: 0.65;
+  opacity: 0.72;
+}
+
+.mm-doc-side-recent-path {
+  margin-top: 1px;
+  font-size: 11px;
+  opacity: 0.55;
 }
 
 .mm-doc-side-recent-remove {

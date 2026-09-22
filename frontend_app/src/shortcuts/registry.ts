@@ -91,6 +91,7 @@ export const SHORTCUTS: ShortcutDef[] = [
 
   // ── File ───────────────────────────────────────────────────────────────
   { id: 'file.save', label: 'Save', group: 'File', freemind: ['Mod+S'], mac: ['Mod+S'] },
+  { id: 'file.open', label: 'Open', group: 'File', freemind: ['Mod+O'], mac: ['Mod+O'] },
 ];
 
 const BY_ID: Record<string, ShortcutDef> = Object.fromEntries(SHORTCUTS.map((s) => [s.id, s]));

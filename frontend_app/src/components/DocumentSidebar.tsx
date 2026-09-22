@@ -6,6 +6,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import { ChevronDown, ChevronRight, X } from 'lucide-react';
 import type { RecentFileEntry } from '../document/types';
+import { formatRelativeModified } from '../document/relativeTime';
 import { scrollDeltaToReveal } from './mindmap/outlineScroll';
 import { findNodePath } from './MindMapHelpers';
 import type { MindMapTree, MindMapTreeNode } from '../types';
@@ -213,7 +214,9 @@ export function DocumentSidebar({
             <p className="mm-doc-side-empty">No recent files yet.</p>
           ) : (
             <ul className="mm-doc-side-recent">
-              {orderedRecent.map((entry) => (
+              {orderedRecent.map((entry) => {
+                const modifiedLabel = formatRelativeModified(entry.modifiedAt ?? entry.openedAt);
+                return (
                 <li key={entry.path} className="mm-doc-side-recent-row">
                   <button
                     type="button"
@@ -223,6 +226,9 @@ export function DocumentSidebar({
                     onClick={() => onOpenRecent(entry.path)}
                   >
                     <span className="mm-doc-side-recent-title">{entry.title}</span>
+                    {modifiedLabel && (
+                      <span className="mm-doc-side-recent-meta">{modifiedLabel}</span>
+                    )}
                     <span className="mm-doc-side-recent-path">{entry.path}</span>
                   </button>
                   <button
@@ -235,7 +241,8 @@ export function DocumentSidebar({
                     <X size={14} strokeWidth={2} />
                   </button>
                 </li>
-              ))}
+                );
+              })}
             </ul>
           )}
           {!canReopenByPath && orderedRecent.length > 0 && (

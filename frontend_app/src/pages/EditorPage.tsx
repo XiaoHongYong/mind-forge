@@ -452,20 +452,22 @@ export function EditorPage() {
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
-      <DocumentTabBar
-        sessions={sessions}
-        activeId={activeId}
-        onActivate={(id) => { void handleActivateTab(id); }}
-        onClose={(id) => { void handleCloseTab(id); }}
-        onNew={() => { void handleNew(); }}
-        leftSidebarOpen={sidebarOpen}
-        onToggleLeftSidebar={() => setSidebarOpen((open) => !open)}
-        rightSidebarOpen={formatSidebarOpen}
-        onToggleRightSidebar={() => setFormatSidebarOpen(!formatSidebarOpen)}
-      />
       <div style={{ flex: 1, minHeight: 0, minWidth: 0, display: 'flex' }}>
         <DesktopMindMapEditor
           key={editorKey}
+          documentTabs={(
+            <DocumentTabBar
+              sessions={sessions}
+              activeId={activeId}
+              onActivate={(id) => { void handleActivateTab(id); }}
+              onClose={(id) => { void handleCloseTab(id); }}
+              onNew={() => { void handleNew(); }}
+              leftSidebarOpen={sidebarOpen}
+              onToggleLeftSidebar={() => setSidebarOpen((open) => !open)}
+              rightSidebarOpen={formatSidebarOpen}
+              onToggleRightSidebar={() => setFormatSidebarOpen(!formatSidebarOpen)}
+            />
+          )}
           sidePanel={sidebarOpen ? (
             <DocumentSidebar
               tab={sidebarTab}

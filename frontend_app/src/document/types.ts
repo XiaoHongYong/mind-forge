@@ -21,7 +21,14 @@ export function newSessionId(): string {
 export interface RecentFileEntry {
   path: string;
   title: string;
+  /** Last time this path was opened or brought to the front of Recent. */
   openedAt: string;
+  /**
+   * Last time the document was saved to this path. Opening alone must not
+   * bump this — the sidebar shows it as “N天前修改”. Older persisted
+   * entries may omit it; fall back to `openedAt` when displaying.
+   */
+  modifiedAt?: string;
 }
 
 export function createEmptyTree(title = 'Central Topic'): MindMapTree {

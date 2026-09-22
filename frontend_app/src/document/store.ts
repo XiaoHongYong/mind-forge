@@ -55,11 +55,24 @@ interface DocumentStore {
   clearRecent: () => void;
 }
 
-function pushRecent(list: RecentFileEntry[], path: string, title: string): RecentFileEntry[] {
+function pushRecent(
+  list: RecentFileEntry[],
+  path: string,
+  title: string,
+  opts?: { touchModified?: boolean },
+): RecentFileEntry[] {
+  const now = new Date().toISOString();
+  const prev = list.find((entry) => entry.path === path);
+  const touchModified = opts?.touchModified === true;
   const next: RecentFileEntry = {
     path,
     title: title || titleFromPath(path),
-    openedAt: new Date().toISOString(),
+    openedAt: now,
+    // Open/reopen only moves the entry to the top. Preserve the last save
+    // time so the sidebar “修改” label does not jump on a click.
+    modifiedAt: touchModified
+      ? now
+      : (prev?.modifiedAt ?? prev?.openedAt ?? now),
   };
   return [next, ...list.filter((e) => e.path !== path)].slice(0, MAX_RECENT);
 }
@@ -213,7 +226,7 @@ export const useDocumentStore = create<DocumentStore>()(
           return {
             ...withActive(updated, saved.id),
             recent: saved.path
-              ? pushRecent(state.recent, saved.path, saved.title)
+              ? pushRecent(state.recent, saved.path, saved.title, { touchModified: true })
               : state.recent,
           };
         });
@@ -235,7 +248,7 @@ export const useDocumentStore = create<DocumentStore>()(
           return {
             ...withActive(updated, saved.id),
             recent: saved.path
-              ? pushRecent(state.recent, saved.path, saved.title)
+              ? pushRecent(state.recent, saved.path, saved.title, { touchModified: true })
               : state.recent,
           };
         });
@@ -243,7 +256,7 @@ export const useDocumentStore = create<DocumentStore>()(
       },
 
       rememberPath: (path, title) => {
-        set((state) => ({ recent: pushRecent(state.recent, path, title) }));
+        set((state) => ({ recent: pushRecent(state.recent, path, title, { touchModified: true }) }));
       },
 
       removeRecent: (path) => {

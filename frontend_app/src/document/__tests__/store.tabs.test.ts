@@ -26,8 +26,14 @@ vi.mock('../io', () => ({
     dirty: false,
   }),
   openDocumentViaDialog: async () => null,
-  saveDocument: async (session: { id: string }) => ({ ...session, dirty: false }),
-  saveDocumentAs: async (session: { id: string }) => ({ ...session, dirty: false }),
+  saveDocument: async (session: { id: string; path: string | null; title: string; tree: unknown; formatId: string }) => ({
+    ...session,
+    dirty: false,
+  }),
+  saveDocumentAs: async (session: { id: string; path: string | null; title: string; tree: unknown; formatId: string }) => ({
+    ...session,
+    dirty: false,
+  }),
 }));
 
 import { useDocumentStore } from '../store';
@@ -146,5 +152,28 @@ describe('document store tabs', () => {
     });
     useDocumentStore.getState().removeRecent('/tmp/a.mmforge');
     expect(useDocumentStore.getState().recent.map((entry) => entry.path)).toEqual(['/tmp/b.mmforge']);
+  });
+
+  it('opening a recent path does not bump modifiedAt; saving does', async () => {
+    const path = '/tmp/map.mmforge';
+    const modifiedAt = '2020-01-01T00:00:00.000Z';
+    useDocumentStore.setState({
+      sessions: [],
+      activeId: null,
+      session: null,
+      recent: [{ path, title: 'map', openedAt: modifiedAt, modifiedAt }],
+    });
+
+    await useDocumentStore.getState().openPath(path);
+    const afterOpen = useDocumentStore.getState().recent.find((e) => e.path === path);
+    expect(afterOpen?.modifiedAt).toBe(modifiedAt);
+    expect(afterOpen?.openedAt).not.toBe(modifiedAt);
+
+    const session = useDocumentStore.getState().session!;
+    await useDocumentStore.getState().save(session.tree, session.title);
+    const afterSave = useDocumentStore.getState().recent.find((e) => e.path === path);
+    expect(afterSave?.modifiedAt).toBeTruthy();
+    expect(afterSave?.modifiedAt).not.toBe(modifiedAt);
+    expect(afterSave?.modifiedAt).toBe(afterSave?.openedAt);
   });
 });
