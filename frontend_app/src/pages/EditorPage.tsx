@@ -3,12 +3,14 @@ import { useTranslation } from 'react-i18next';
 import { DocumentTabBar } from '../components/DocumentTabBar';
 import { DocumentSidebar, type DocumentSidebarTab } from '../components/DocumentSidebar';
 import { DesktopMindMapEditor } from '../components/MindMapEditor';
+import type { MindMapEditorHandle } from '../components/MindMapEditor.types';
+import type { History } from '../components/mindmap/history';
 import type { LinkableFile } from '../components/MindMapFileLinkDialog';
 import { useDocumentStore, writeUnsavedBackup, restoreOrCreateNew, deleteUnsavedBackup, flushWorkspaceSave, restoreWorkspaceOnce } from '../document';
 import type { DocumentSession } from '../document/types';
 import { documentWindowCaption, setWindowCaption } from '../platform/windowCaption';
 import { isTauri } from '../storage';
-import type { MindMapTree, NodeAttachmentRef } from '../types';
+import type { MindMapTree, MindMapTreeNode, NodeAttachmentRef } from '../types';
 import { fromBase64, toBase64 } from '../utils/base64';
 import { createFilePreview } from '../utils/filePreview';
 import { downloadBlob } from '../utils/download';
@@ -71,6 +73,7 @@ export function EditorPage() {
   const [editorKey, setEditorKey] = useState(0);
   const [title, setTitle] = useState(session?.title ?? untitled);
   const [initialTree, setInitialTree] = useState<MindMapTree | null>(session?.tree ?? null);
+  const [initialHistory, setInitialHistory] = useState<History<MindMapTreeNode> | null>(null);
   const [initialDirty, setInitialDirty] = useState(Boolean(session?.dirty));
   const [currentTree, setCurrentTree] = useState<MindMapTree | null>(session?.tree ?? null);
   const [saving, setSaving] = useState(false);
@@ -80,6 +83,10 @@ export function EditorPage() {
   const dirtyRef = useRef(Boolean(session?.dirty));
   const activeIdRef = useRef(activeId);
   const syncedSessionIdRef = useRef<string | null>(session?.id ?? null);
+  const editorRef = useRef<MindMapEditorHandle | null>(null);
+  const currentTreeRef = useRef<MindMapTree | null>(session?.tree ?? null);
+  /** In-memory undo stacks keyed by session id — not persisted across app relaunch. */
+  const historyBySessionRef = useRef(new Map<string, History<MindMapTreeNode>>());
   const backupStateRef = useRef<{
     path: string | null;
     title: string;
@@ -94,6 +101,7 @@ export function EditorPage() {
 
   activeIdRef.current = activeId;
   selectedNodeIdRef.current = selectedNodeId;
+  currentTreeRef.current = currentTree;
 
   const sessionId = session?.id ?? null;
   const focusSessionRef = useRef(sessionId);
@@ -135,20 +143,36 @@ export function EditorPage() {
 
   /** Persist the live editor buffer into the active store session before switching. */
   const commitEditorToStore = useCallback(() => {
+    // Prefer a live snapshot so pan/zoom/selection survive tab remounts.
+    // onTreeChange intentionally omits view_state churn (would fire on every pan).
+    const tree = editorRef.current?.getTreeSnapshot() ?? currentTreeRef.current;
+    if (tree) {
+      currentTreeRef.current = tree;
+      setCurrentTree(tree);
+      backupStateRef.current = { ...backupStateRef.current, tree, title };
+    }
+    const sessionId = activeIdRef.current;
+    const history = editorRef.current?.getHistorySnapshot();
+    if (sessionId && history) {
+      historyBySessionRef.current.set(sessionId, history);
+    }
     commitActive({
-      tree: currentTree ?? undefined,
+      tree: tree ?? undefined,
       title,
       dirty: dirtyRef.current,
     });
-  }, [commitActive, currentTree, title]);
+  }, [commitActive, title]);
 
   const syncFromSession = useCallback((next = useDocumentStore.getState().session) => {
     if (!next) return;
     setTitle(next.title);
     setInitialTree(next.tree);
+    setInitialHistory(historyBySessionRef.current.get(next.id) ?? null);
     setInitialDirty(Boolean(next.dirty));
     setCurrentTree(next.tree);
+    currentTreeRef.current = next.tree;
     dirtyRef.current = Boolean(next.dirty);
+    setSelectedNodeId(next.tree.view_state?.selected_node_id ?? 'root');
     setEditorKey((k) => k + 1);
     selectionEpoch.current += 1;
     setError('');
@@ -162,8 +186,10 @@ export function EditorPage() {
       const { getCurrentWindow } = await import('@tauri-apps/api/window');
       if (cancelled) return;
       unlisten = await getCurrentWindow().onCloseRequested(async () => {
+        const tree = editorRef.current?.getTreeSnapshot() ?? backupStateRef.current.tree;
+        if (tree) backupStateRef.current = { ...backupStateRef.current, tree };
         commitActive({
-          tree: backupStateRef.current.tree ?? undefined,
+          tree: tree ?? undefined,
           title: backupStateRef.current.title,
           dirty: dirtyRef.current,
         });
@@ -236,6 +262,7 @@ export function EditorPage() {
       const saved = await save(tree, currentTitle || title);
       setTitle(saved.title);
       setCurrentTree(saved.tree);
+      currentTreeRef.current = saved.tree;
       // Do not touch initialTree / editorKey — undo history must survive Save.
       dirtyRef.current = false;
       setSaveMsg(saved.path
@@ -250,13 +277,15 @@ export function EditorPage() {
   }, [save, title, t]);
 
   const handleSaveAs = useCallback(async () => {
-    if (!currentTree) return;
+    const tree = editorRef.current?.getTreeSnapshot() ?? currentTree;
+    if (!tree) return;
     setSaving(true);
     setError('');
     try {
-      const saved = await saveAs(currentTree, title);
+      const saved = await saveAs(tree, title);
       setTitle(saved.title);
       setCurrentTree(saved.tree);
+      currentTreeRef.current = saved.tree;
       dirtyRef.current = false;
       setSaveMsg(saved.path
         ? t('editor.saved', { defaultValue: 'Saved' })
@@ -315,6 +344,7 @@ export function EditorPage() {
     }
 
     const next = closeSession(id);
+    historyBySessionRef.current.delete(id);
     await flushWorkspaceSave();
     if (!next) return;
   }, [closeSession, commitEditorToStore, t, untitled]);
@@ -489,6 +519,7 @@ export function EditorPage() {
       <div style={{ flex: 1, minHeight: 0, minWidth: 0, display: 'flex' }}>
         <DesktopMindMapEditor
           key={editorKey}
+          ref={editorRef}
           documentTabs={(
             <DocumentTabBar
               sessions={sessions}
@@ -531,6 +562,7 @@ export function EditorPage() {
             onOpenDocument={() => { void handleOpen(); }}
             onSaveAsDocument={() => { void handleSaveAs(); }}
             initialTree={initialTree}
+            initialHistory={initialHistory}
             initialDirty={initialDirty}
             title={title}
             onSave={handleSave}

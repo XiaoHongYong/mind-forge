@@ -4,6 +4,7 @@ import { cloneTree } from '../MindMapHelpers';
 import {
   canRedo as canRedoAt,
   canUndo as canUndoAt,
+  cloneHistory,
   current,
   initHistory,
   pushHistory,
@@ -11,6 +12,16 @@ import {
   undoHistory,
   type History,
 } from './history';
+
+function seedHistory(
+  initialRoot: MindMapTreeNode,
+  initialHistory?: History<MindMapTreeNode> | null,
+): History<MindMapTreeNode> {
+  if (initialHistory && initialHistory.entries.length > 0) {
+    return cloneHistory(initialHistory, cloneTree);
+  }
+  return initHistory(cloneTree(initialRoot));
+}
 
 /**
  * Undo history for the map.
@@ -22,12 +33,15 @@ import {
  *
  * `onRestore` is called with the tree to go back to — undo and redo change the
  * cursor here, but putting the tree back is the editor's business.
+ *
+ * `initialHistory` restores a parked stack when a document tab remounts.
  */
 export function useMindMapHistory(
   initialRoot: MindMapTreeNode,
   onRestore: (root: MindMapTreeNode) => void,
+  initialHistory?: History<MindMapTreeNode> | null,
 ) {
-  const ref = useRef<History<MindMapTreeNode>>(initHistory(initialRoot));
+  const ref = useRef<History<MindMapTreeNode>>(seedHistory(initialRoot, initialHistory));
   const [state, setState] = useState<History<MindMapTreeNode>>(ref.current);
 
   const apply = useCallback((next: History<MindMapTreeNode>) => {
@@ -44,6 +58,17 @@ export function useMindMapHistory(
   const reset = useCallback((root: MindMapTreeNode) => {
     apply(initHistory(cloneTree(root)));
   }, [apply]);
+
+  /** Swap in a parked stack (tab restore). Entries are cloned. */
+  const replace = useCallback((next: History<MindMapTreeNode>) => {
+    apply(cloneHistory(next, cloneTree));
+  }, [apply]);
+
+  /** Snapshot for the page to park when leaving this tab. */
+  const getSnapshot = useCallback(
+    (): History<MindMapTreeNode> => cloneHistory(ref.current, cloneTree),
+    [],
+  );
 
   const step = useCallback((next: History<MindMapTreeNode> | null) => {
     if (!next) return;
@@ -63,6 +88,8 @@ export function useMindMapHistory(
   return useMemo(() => ({
     push,
     reset,
+    replace,
+    getSnapshot,
     undo,
     redo,
     canUndo: canUndoAt(state),
@@ -70,5 +97,5 @@ export function useMindMapHistory(
     /** For the history panel, which lists the states and their positions. */
     entries: state.entries,
     index: state.index,
-  }), [push, reset, undo, redo, state]);
+  }), [push, reset, replace, getSnapshot, undo, redo, state]);
 }

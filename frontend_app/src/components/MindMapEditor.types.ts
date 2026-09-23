@@ -1,10 +1,23 @@
 import type { ReactNode } from 'react';
 import type { ExportFormat } from '../utils/exportFormats';
-import type { MindMapTree, NodeAttachmentRef } from '../types';
+import type { MindMapTree, MindMapTreeNode, NodeAttachmentRef } from '../types';
+import type { History } from './mindmap/history';
 import type { LinkableFile } from './MindMapFileLinkDialog';
+
+/** Imperative API for the page to read a fresh tree (incl. view_state) before tab switches. */
+export interface MindMapEditorHandle {
+  getTreeSnapshot: () => MindMapTree;
+  /** Undo stack for the active document — parked across tab remounts. */
+  getHistorySnapshot: () => History<MindMapTreeNode>;
+}
 
 export interface MindMapEditorProps {
   initialTree: MindMapTree | null;
+  /**
+   * Parked undo stack for this document tab. When set, remount restores it
+   * instead of starting from a single root entry.
+   */
+  initialHistory?: History<MindMapTreeNode> | null;
   /** When true, the freshly opened tree is already dirty (e.g. restored backup). */
   initialDirty?: boolean;
   initialShowShortcuts?: boolean;

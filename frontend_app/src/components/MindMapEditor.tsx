@@ -17,8 +17,10 @@
  */
 import {
   Fragment,
+  forwardRef,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -38,7 +40,7 @@ import { MindMapFileLinkDialog, type LinkableFile } from './MindMapFileLinkDialo
 import type { NoteEditorHandle } from './notes/NoteEditor';
 import { normalizeBareTasks, toggleTaskAtIndex } from './notes/markdownEditing';
 import { useUserLabels } from '../hooks/useUserLabels';
-import type { MindMapEditorProps } from './MindMapEditor.types';
+import type { MindMapEditorHandle, MindMapEditorProps } from './MindMapEditor.types';
 import {
   PROGRESS_PRESETS,
 } from './MindMapConstants';
@@ -284,8 +286,8 @@ function toolbarGroup(label: string, children: ReactNode, ribbonTab?: string) {
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
-export function DesktopMindMapEditor({
-  initialTree, initialDirty = false, initialShowShortcuts, disableAutoPanToSelection, externalNodeAttachments, title, onSave, saving, saveMsg, error,
+export const DesktopMindMapEditor = forwardRef<MindMapEditorHandle, MindMapEditorProps>(function DesktopMindMapEditor({
+  initialTree, initialHistory = null, initialDirty = false, initialShowShortcuts, disableAutoPanToSelection, externalNodeAttachments, title, onSave, saving, saveMsg, error,
   exportFormats, onExport,
   versionLabel, versionTooltip,
   onTreeChange, onSelectionChange, focusNodeRequest, onEditingTextChange, onNodeFileDrop, onOpenNodeAttachment,
@@ -296,7 +298,7 @@ export function DesktopMindMapEditor({
   onNewDocument, onOpenDocument, onSaveAsDocument, sidePanel, documentTabs, onShowDocumentPanel,
   onCloseDocumentPanel,
   onDirtyChange,
-}: MindMapEditorProps) {
+}, ref) {
   const { t } = useTranslation();
   const themeMode = useThemeStore((s) => s.mode);
   const toggleThemeMode = useThemeStore((s) => s.toggleMode);
@@ -451,7 +453,11 @@ export function DesktopMindMapEditor({
   });
   const isPanning = useRef(false);
   const lastPan = useRef({ x: 0, y: 0 });
-  const skipNextAutoPan = useRef(false);
+  // Skip the first auto-pan when remounting with a saved viewport (tab restore).
+  const skipNextAutoPan = useRef(
+    typeof initialTree?.view_state?.pan_x === 'number'
+      || typeof initialTree?.view_state?.pan_y === 'number',
+  );
   const appliedFocusTokenRef = useRef<number | null>(null);
 
   // ── UI toggles ─────────────────────────────────────────────────────────────
@@ -700,6 +706,7 @@ export function DesktopMindMapEditor({
   const history = useMindMapHistory(
     migrateNode(initialTree?.root ?? defaultRoot()),
     useCallback((restored: MindMapTreeNode) => { setRoot(restored); setIsDirty(true); }, []),
+    initialHistory,
   );
 
   // ── Refs ───────────────────────────────────────────────────────────────────
@@ -739,7 +746,12 @@ export function DesktopMindMapEditor({
     setRoot(r);
     setRootLeftCollapsed(false);
     setRootRightCollapsed(false);
-    history.reset(r);
+    // Remount with a parked stack must not wipe undo; fresh opens still reset.
+    if (initialHistory && initialHistory.entries.length > 0) {
+      history.replace(initialHistory);
+    } else {
+      history.reset(r);
+    }
     setSelectedId(nextSelectedId);
     const nextPanX = typeof savedView?.pan_x === 'number' && Number.isFinite(savedView.pan_x) ? savedView.pan_x : 160;
     const nextPanY = typeof savedView?.pan_y === 'number' && Number.isFinite(savedView.pan_y) ? savedView.pan_y : 300;
@@ -1667,6 +1679,11 @@ export function DesktopMindMapEditor({
     },
     map_style: Object.keys(mapStyle).length > 0 ? { ...mapStyle } : undefined,
   }), [root, pan, zoom, focusMode, focusAnchorId, selectedId, layoutMode, mapStyle]);
+
+  useImperativeHandle(ref, () => ({
+    getTreeSnapshot: currentTreeSnapshot,
+    getHistorySnapshot: history.getSnapshot,
+  }), [currentTreeSnapshot, history.getSnapshot]);
 
   const handleSave = useCallback(() => {
     if (saving) return;
@@ -4190,6 +4207,6 @@ export function DesktopMindMapEditor({
       </>)}
     </div>
   );
-}
+});
 
 export const MindMapEditor = DesktopMindMapEditor;

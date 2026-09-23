@@ -3,6 +3,7 @@ import {
   HISTORY_LIMIT,
   canRedo,
   canUndo,
+  cloneHistory,
   current,
   initHistory,
   pushHistory,
@@ -30,6 +31,14 @@ describe('history', () => {
     expect(undoHistory(h)).toBeNull();
     h = redoHistory(h)!;
     expect(current(h)).toBe('b');
+  });
+
+  it('cloneHistory copies entries and clamps the cursor', () => {
+    const h = pushHistory(pushHistory(initHistory('a'), 'b'), 'c');
+    const copy = cloneHistory(h, (s) => `x:${s}`);
+    expect(copy.entries).toEqual(['x:a', 'x:b', 'x:c']);
+    expect(copy.index).toBe(2);
+    expect(cloneHistory({ entries: ['a'], index: 99 }, (s) => s).index).toBe(0);
   });
 
   /**

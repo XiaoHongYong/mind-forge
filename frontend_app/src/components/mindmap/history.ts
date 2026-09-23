@@ -23,6 +23,18 @@ export const canRedo = <T,>(history: History<T>): boolean => history.index < his
 /** The state the cursor is currently on. */
 export const current = <T,>(history: History<T>): T => history.entries[history.index];
 
+/** Deep-ish copy of the stack so a parked tab cannot be mutated by later edits. */
+export const cloneHistory = <T,>(
+  history: History<T>,
+  cloneEntry: (entry: T) => T,
+): History<T> => {
+  const entries = history.entries.map(cloneEntry);
+  const index = entries.length === 0
+    ? 0
+    : Math.min(Math.max(0, history.index), entries.length - 1);
+  return { entries, index };
+};
+
 /**
  * Record a new state.
  *
