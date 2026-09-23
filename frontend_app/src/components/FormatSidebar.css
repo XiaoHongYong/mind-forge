@@ -632,8 +632,4 @@
   font-weight: 600;
 }
 
-@media (max-width: 768px) {
-  .mm-format-sidebar {
-    display: none;
-  }
-}
+/* Narrow viewports mount FormatSidebar in .mm-mobile-sheet instead of the right dock. */

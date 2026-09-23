@@ -153,6 +153,9 @@
     "zoomOut": "缩小",
     "zoomReset": "重置为 100%"
   },
+  "mobile": {
+    "more": "更多"
+  },
   "menu": {
     "addChild": "添加子节点",
     "addSibling": "添加同级节点",
@@ -352,6 +355,7 @@
   "sidebar": {
     "close": "关闭侧栏",
     "documents": "文档",
+    "docsShort": "文档",
     "emptyOutline": "当前没有打开的文档。",
     "emptyRecent": "暂无最近打开的文件。",
     "outline": "大纲",

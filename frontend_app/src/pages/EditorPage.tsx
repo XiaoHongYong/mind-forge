@@ -35,9 +35,28 @@ export function EditorPage() {
   const openPath = useDocumentStore((s) => s.openPath);
   const removeRecent = useDocumentStore((s) => s.removeRecent);
   const [sidebarTab, setSidebarTab] = useState<DocumentSidebarTab>('recent');
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() =>
+    typeof window === 'undefined' || !window.matchMedia('(max-width: 768px)').matches,
+  );
   const formatSidebarOpen = useUiStore((s) => s.formatSidebarOpen);
   const setFormatSidebarOpen = useUiStore((s) => s.setFormatSidebarOpen);
+
+  const isNarrowViewport = () =>
+    typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches;
+
+  const toggleLeftSidebar = useCallback(() => {
+    setSidebarOpen((open) => {
+      const next = !open;
+      if (next && isNarrowViewport()) setFormatSidebarOpen(false);
+      return next;
+    });
+  }, [setFormatSidebarOpen]);
+
+  const toggleRightSidebar = useCallback(() => {
+    const next = !formatSidebarOpen;
+    setFormatSidebarOpen(next);
+    if (next && isNarrowViewport()) setSidebarOpen(false);
+  }, [formatSidebarOpen, setFormatSidebarOpen]);
   const [selectedNodeId, setSelectedNodeId] = useState<string>('root');
   const [focusNodeRequest, setFocusNodeRequest] = useState<{ nodeId: string; token: number } | null>(null);
   const [recentError, setRecentError] = useState('');
@@ -331,6 +350,11 @@ export function EditorPage() {
   const showDocumentPanel = useCallback((tab: DocumentSidebarTab) => {
     setSidebarTab(tab);
     setSidebarOpen(true);
+    if (isNarrowViewport()) setFormatSidebarOpen(false);
+  }, [setFormatSidebarOpen]);
+
+  const closeDocumentPanel = useCallback(() => {
+    setSidebarOpen(false);
   }, []);
 
   const handleEditingTextChange = useCallback((nodeId: string | null, text: string) => {
@@ -473,9 +497,9 @@ export function EditorPage() {
               onClose={(id) => { void handleCloseTab(id); }}
               onNew={() => { void handleNew(); }}
               leftSidebarOpen={sidebarOpen}
-              onToggleLeftSidebar={() => setSidebarOpen((open) => !open)}
+              onToggleLeftSidebar={toggleLeftSidebar}
               rightSidebarOpen={formatSidebarOpen}
-              onToggleRightSidebar={() => setFormatSidebarOpen(!formatSidebarOpen)}
+              onToggleRightSidebar={toggleRightSidebar}
             />
           )}
           sidePanel={sidebarOpen ? (
@@ -497,6 +521,7 @@ export function EditorPage() {
             />
           ) : null}
           onShowDocumentPanel={showDocumentPanel}
+          onCloseDocumentPanel={closeDocumentPanel}
             documentPath={session.path}
             linkableFiles={linkableFiles}
             linkableFilesLoading={false}

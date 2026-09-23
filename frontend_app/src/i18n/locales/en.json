@@ -153,6 +153,9 @@
     "zoomOut": "Zoom out",
     "zoomReset": "Reset to 100%"
   },
+  "mobile": {
+    "more": "More"
+  },
   "menu": {
     "addChild": "Add Child",
     "addSibling": "Add Sibling",
@@ -352,6 +355,7 @@
   "sidebar": {
     "close": "Close sidebar",
     "documents": "Documents",
+    "docsShort": "Docs",
     "emptyOutline": "No document open.",
     "emptyRecent": "No recent files yet.",
     "outline": "Outline",

@@ -842,6 +842,8 @@ export interface FormatSidebarProps {
   onZoomReset: () => void;
   onZoomFit: () => void;
   onClose: () => void;
+  /** Mobile bottom sheet: show only the active pane, no Style/Canvas tab strip. */
+  hideTabs?: boolean;
 }
 
 export function FormatSidebar({
@@ -879,6 +881,7 @@ export function FormatSidebar({
   onZoomReset,
   onZoomFit,
   onClose,
+  hideTabs = false,
 }: FormatSidebarProps): JSX.Element {
   const { t } = useTranslation();
   const activeThemeId = mapStyle.colorThemeId ?? null;
@@ -896,34 +899,41 @@ export function FormatSidebar({
   const autoLabel = t('format.auto', { defaultValue: 'Auto' });
   const matchThemeLabel = t('format.matchTheme', { defaultValue: 'Match theme' });
   const closePanel = t('format.closePanel', { defaultValue: 'Close format panel' });
+  const styleLabel = t('format.style', { defaultValue: 'Style' });
+  const canvasLabel = t('format.canvas', { defaultValue: 'Canvas' });
+  const panelLabel = hideTabs
+    ? (activeTab === 'style' ? styleLabel : canvasLabel)
+    : t('format.panel', { defaultValue: 'Format' });
 
   return (
-    <aside className="mm-format-sidebar" aria-label={t('format.panel', { defaultValue: 'Format' })}>
-      <div className="mm-fs-header">
-        <div className="mm-fs-tabs" role="tablist">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === 'style'}
-            className={`mm-fs-tab${activeTab === 'style' ? ' mm-fs-tab--active' : ''}`}
-            onClick={() => onActiveTabChange('style')}
-          >
-            {t('format.style', { defaultValue: 'Style' })}
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === 'canvas'}
-            className={`mm-fs-tab${activeTab === 'canvas' ? ' mm-fs-tab--active' : ''}`}
-            onClick={() => onActiveTabChange('canvas')}
-          >
-            {t('format.canvas', { defaultValue: 'Canvas' })}
+    <aside className={`mm-format-sidebar${hideTabs ? ' mm-format-sidebar--sheet' : ''}`} aria-label={panelLabel}>
+      {!hideTabs && (
+        <div className="mm-fs-header">
+          <div className="mm-fs-tabs" role="tablist">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'style'}
+              className={`mm-fs-tab${activeTab === 'style' ? ' mm-fs-tab--active' : ''}`}
+              onClick={() => onActiveTabChange('style')}
+            >
+              {styleLabel}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'canvas'}
+              className={`mm-fs-tab${activeTab === 'canvas' ? ' mm-fs-tab--active' : ''}`}
+              onClick={() => onActiveTabChange('canvas')}
+            >
+              {canvasLabel}
+            </button>
+          </div>
+          <button type="button" className="mm-fs-close" onClick={onClose} title={closePanel} aria-label={closePanel}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
         </div>
-        <button type="button" className="mm-fs-close" onClick={onClose} title={closePanel} aria-label={closePanel}>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-        </button>
-      </div>
+      )}
 
       <div className="mm-fs-body">
         {activeTab === 'style' && (

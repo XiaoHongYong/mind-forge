@@ -52,6 +52,8 @@ export interface MindMapEditorProps {
   documentTabs?: ReactNode;
   /** App View menu: show the recent list or the outline. */
   onShowDocumentPanel?: (tab: 'recent' | 'outline') => void;
+  /** Close the document sidebar (used on mobile when another bottom sheet opens). */
+  onCloseDocumentPanel?: () => void;
   /** Fired whenever the editor's dirty flag changes. */
   onDirtyChange?: (dirty: boolean) => void;
 }
