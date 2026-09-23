@@ -263,7 +263,7 @@ Build workflow configuration lives in `.github/workflows/` when present.
 
 Expectations: focused changes, local / no telemetry, no secrets in logs,
 clear notes for user-visible behavior. Keep frontend and desktop version /
-bundle metadata in sync (currently `0.6.2`).
+bundle metadata in sync (currently `0.1.0`).
 
 ## License
 

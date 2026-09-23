@@ -2,6 +2,10 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { fileURLToPath, URL } from 'node:url';
 
+// Tauri android/ios `dev` sets this so the device can reach Vite on the LAN.
+// Desktop stays on loopback; mobile binds all interfaces and points HMR at the LAN host.
+const tauriDevHost = process.env.TAURI_DEV_HOST;
+
 // https://vitejs.dev/config/
 export default defineConfig({
   envDir: '..',
@@ -30,9 +34,16 @@ export default defineConfig({
     },
   },
   server: {
-    host: '127.0.0.1',
+    host: tauriDevHost ? '0.0.0.0' : '127.0.0.1',
     port: 5274,
     strictPort: true,
+    hmr: tauriDevHost
+      ? {
+          protocol: 'ws',
+          host: tauriDevHost,
+          port: 5274,
+        }
+      : undefined,
     proxy: {
       '/api': {
         target: 'http://localhost:8090',

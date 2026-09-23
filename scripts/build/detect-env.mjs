@@ -5,10 +5,9 @@
 
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { homedir, platform as osPlatform, arch as osArch } from 'node:os';
-import { join, delimiter } from 'node:path';
+import { join, delimiter, resolve, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { dirname } from 'node:path';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = join(HERE, '../..');
@@ -309,4 +308,61 @@ export function formatDetectReport(env) {
     lines.push(`  ${flag} ${name.padEnd(8)} mode=${t.mode}${t.notes.length ? `  — ${t.notes.join('; ')}` : ''}`);
   }
   return lines.join('\n');
+}
+
+/** Shell-safe single-quoted string for eval in bash. */
+function shQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * Env vars for `cargo tauri android dev|build` (same keys as build.mjs applyAndroidEnv).
+ * @returns {{ exports: string, missing: string[] }}
+ */
+export function formatAndroidEnvExports(env = detectEnvironment()) {
+  /** @type {string[]} */
+  const missing = [];
+  if (!env.android.sdk) missing.push('Android SDK（$ANDROID_HOME 或 ~/Library/Android/sdk）');
+  if (!env.android.ndk) missing.push('Android NDK（$ANDROID_NDK_HOME 或 SDK/ndk/<version>）');
+  if (!env.java.javaHome) missing.push('JDK / JAVA_HOME');
+  if (!env.rust.cargo) missing.push('cargo / Rust');
+
+  /** @type {string[]} */
+  const lines = [];
+  if (env.android.sdk) {
+    lines.push(`export ANDROID_HOME=${shQuote(env.android.sdk)}`);
+    lines.push(`export ANDROID_SDK_ROOT=${shQuote(env.android.sdk)}`);
+  }
+  if (env.android.ndk) {
+    lines.push(`export ANDROID_NDK_HOME=${shQuote(env.android.ndk)}`);
+  }
+  if (env.java.javaHome) {
+    lines.push(`export JAVA_HOME=${shQuote(env.java.javaHome)}`);
+  }
+  if (env.android.platformTools) {
+    const sep = HOST.platform === 'win32' ? ';' : ':';
+    lines.push(`export PATH=${shQuote(`${env.android.platformTools}${sep}${process.env.PATH || ''}`)}`);
+  }
+  return { exports: lines.join('\n'), missing };
+}
+
+function isCliMain() {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return fileURLToPath(import.meta.url) === resolve(entry);
+  } catch {
+    return false;
+  }
+}
+
+// CLI: node scripts/build/detect-env.mjs --export-android-env
+if (isCliMain() && process.argv.includes('--export-android-env')) {
+  const { exports, missing } = formatAndroidEnvExports();
+  if (missing.length) {
+    console.error(`Android 开发环境不完整，缺少: ${missing.join('；')}`);
+    process.exit(1);
+  }
+  console.log(exports);
+  process.exit(0);
 }

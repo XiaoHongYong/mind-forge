@@ -12,7 +12,7 @@
  * equal `CHANGELOG[0].version`.
  */
 
-export const APP_VERSION = '0.6.2';
+export const APP_VERSION = '0.1.0';
 
 /**
  * localStorage key recording the last version whose "What's New" the user saw.

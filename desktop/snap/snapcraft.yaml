@@ -1,6 +1,6 @@
 name: mindforge
 title: MindForge
-version: '0.6.2'
+version: '0.1.0'
 summary: Offline local mind maps — no account, no network
 description: |
   MindForge is a privacy-first mind mapping app that works entirely offline:

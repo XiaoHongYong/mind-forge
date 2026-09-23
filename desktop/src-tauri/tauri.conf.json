@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/tauri-v2/crates/tauri-cli/schema.json",
   "productName": "MindForge",
-  "version": "0.6.2",
+  "version": "0.1.0",
   "identifier": "com.mindforge.desktop",
   "build": {
     "frontendDist": "../../frontend_app/dist",
