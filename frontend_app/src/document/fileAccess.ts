@@ -1,6 +1,21 @@
 import { isTauri } from '../storage';
+import {
+  activateUri,
+  getPersistCapability,
+  isOhos,
+  ohosOpenDocument,
+  ohosReadFile,
+  ohosSaveDocument,
+  ohosWriteFile,
+  rememberGrant,
+} from '../platform/ohos';
 import { fromBase64, toBase64 } from '../utils/base64';
 import i18n from '../i18n';
+
+/** Basename of a path or URI — what the save dialog should pre-fill. */
+function baseName(value: string): string {
+  return value.split(/[/\\]/).pop() || value;
+}
 
 function openFilters() {
   return [
@@ -21,7 +36,26 @@ function saveFilters() {
   ];
 }
 
+/**
+ * Reads a path — or, on HarmonyOS, a picker URI.
+ *
+ * The URI is only readable while its grant is live, so a URI that came from a
+ * previous session is re-activated first. That call is skipped when the device
+ * has already told us it does not support persisted grants; there the live
+ * grant from this session's own pick is the only one that exists, and a read
+ * failure is a real failure worth surfacing.
+ */
 export async function readFileBytes(path: string): Promise<Uint8Array> {
+  if (isOhos()) {
+    if (getPersistCapability()) {
+      try {
+        await activateUri(path);
+      } catch {
+        // Not a persisted URI (e.g. just picked). The read below is the arbiter.
+      }
+    }
+    return ohosReadFile(path);
+  }
   if (!isTauri()) {
     throw new Error('Reading absolute paths requires the desktop app');
   }
@@ -31,6 +65,10 @@ export async function readFileBytes(path: string): Promise<Uint8Array> {
 }
 
 export async function writeFileBytes(path: string, bytes: Uint8Array): Promise<void> {
+  if (isOhos()) {
+    await ohosWriteFile(path, bytes);
+    return;
+  }
   if (!isTauri()) {
     throw new Error('Writing absolute paths requires the desktop app');
   }
@@ -40,6 +78,12 @@ export async function writeFileBytes(path: string, bytes: Uint8Array): Promise<v
 
 /** Native open dialog → absolute path, or null if cancelled. */
 export async function pickOpenPath(): Promise<string | null> {
+  if (isOhos()) {
+    const ref = await ohosOpenDocument(openFilters());
+    if (!ref) return null;
+    await rememberGrant(ref.uri);
+    return ref.uri;
+  }
   if (!isTauri()) return null;
   const { open } = await import('@tauri-apps/plugin-dialog');
   const selected = await open({
@@ -52,6 +96,14 @@ export async function pickOpenPath(): Promise<string | null> {
 
 /** Native save dialog → absolute path, or null if cancelled. */
 export async function pickSavePath(defaultPath: string): Promise<string | null> {
+  if (isOhos()) {
+    // The shell's dialog takes a suggested *name*, not a location. Naming an
+    // existing document there also keeps a re-save aimed at the same file.
+    const ref = await ohosSaveDocument(baseName(defaultPath), saveFilters());
+    if (!ref) return null;
+    await rememberGrant(ref.uri);
+    return ref.uri;
+  }
   if (!isTauri()) return null;
   const { save } = await import('@tauri-apps/plugin-dialog');
   const selected = await save({

@@ -3,8 +3,10 @@ set -euo pipefail
 
 # Run / build MindForge locally.
 # Usage:
-#   ./run.sh [desktop|app|android] [--install]
+#   ./run.sh [desktop|app|android|ohos] [--install]
 #   ./run.sh android [--init-mobile] [--open] [--host [ADDR]] [DEVICE] [-- …]
+#   ./run.sh ohos [--sync-only] [--release] [--open] [--deploy] [--run]
+#                 [--logs] [--device SN] [--clean]
 #   ./run.sh build [--detect|--all] [--targets LIST] [--init-mobile] [--dry-run] [--install]
 #
 #   desktop         Tauri desktop app (default) — pnpm tauri:dev
@@ -13,24 +15,51 @@ set -euo pipefail
 #                     Needs SDK / NDK / JDK. First time: --init-mobile
 #                     Physical device: often need --host (LAN IP for Vite)
 #                     Open Android Studio: --open
+#   ohos            HarmonyOS NEXT shell (ArkWeb) — ohos/
+#                     Default: build frontend + sync bundle + assembleHap
+#                     Needs DevEco Studio (it ships the SDK, hvigor and hdc)
+#                     --install / --run need a SIGNED HAP: sign once in
+#                     DevEco Studio, see ohos/README.md
 #   build           Cross-platform release build via scripts/build/build.mjs
 #                     (default: native desktop for this host)
-#   build --detect  Probe Xcode / Android SDK·NDK / JDK / Rust / Docker only
+#   build --detect  Probe Xcode / Android SDK·NDK / JDK / Rust / Docker / DevEco
 #   build --all     Build every target ready on this machine
 #   --targets LIST  Comma list: mac,windows,linux,android
 #   --init-mobile   Run tauri android init when missing (android | build)
 #   --dry-run       Print build commands without executing
-#   --install, -i   Install workspace deps before starting
+#   --install, -i   Install workspace deps before starting (all modes)
+#
+# ohos options:
+#   --sync-only     Stop after rebuilding the bundle into rawfile (no hvigor)
+#   --release       Assemble with buildMode=release instead of debug
+#   --open          Open ohos/ in DevEco Studio
+#   --deploy        Install the *signed* HAP to the connected device (hdc)
+#   --run           Deploy, then start EntryAbility
+#   --logs          Stream hilog filtered to MindForge.Diagnostics
+#   --device SN     Target device serial, for --deploy / --run / --logs
+#   --clean         Remove ohos build outputs and exit
+#
+# --install stays what it always was (pnpm install, any mode). Pushing the app
+# to a device is --deploy, so the two never mean different things depending on
+# where the flag sits.
 
 MODE="desktop"
 DO_INSTALL=0
 INIT_MOBILE=0
 BUILD_ARGS=()
 ANDROID_ARGS=()
+OHOS_SYNC_ONLY=0
+OHOS_RELEASE=0
+OHOS_OPEN=0
+OHOS_DEPLOY=0
+OHOS_RUN=0
+OHOS_LOGS=0
+OHOS_CLEAN=0
+OHOS_DEVICE=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    desktop|app|build|android)
+    desktop|app|build|android|ohos)
       MODE="$1"
       shift
       ;;
@@ -87,8 +116,47 @@ while [[ $# -gt 0 ]]; do
       BUILD_ARGS+=(--json)
       shift
       ;;
+    # Flags that mean something to both android (passed through to
+    # `cargo tauri android dev`) and ohos (handled here). Dispatch on MODE so
+    # adding an ohos flag cannot quietly stop `./run.sh android --open` working.
+    --sync-only|--release|--open|--deploy|--run|--logs|--clean)
+      if [[ "$MODE" == "android" ]]; then
+        ANDROID_ARGS+=("$1")
+      elif [[ "$MODE" == "ohos" ]]; then
+        case "$1" in
+          --sync-only) OHOS_SYNC_ONLY=1 ;;
+          --release)   OHOS_RELEASE=1 ;;
+          --open)      OHOS_OPEN=1 ;;
+          --deploy)    OHOS_DEPLOY=1 ;;
+          --run)       OHOS_RUN=1 ;;
+          --logs)      OHOS_LOGS=1 ;;
+          --clean)     OHOS_CLEAN=1 ;;
+        esac
+      else
+        echo "$1 requires mode 'ohos' or 'android' (got: $MODE)" >&2
+        exit 2
+      fi
+      shift
+      ;;
+    --device)
+      if [[ $# -lt 2 ]]; then
+        echo "Missing value for $1" >&2
+        exit 2
+      fi
+      OHOS_DEVICE="$2"
+      shift 2
+      ;;
+    --device=*)
+      OHOS_DEVICE="${1#*=}"
+      shift
+      ;;
     -h|--help)
-      sed -n '3,24p' "$0"
+      # Print the leading comment block: comment lines after the shebang, up to
+      # the first line of code. Blank lines inside the block are skipped, and
+      # the "first line of code" test ignores whitespace so an indented first
+      # statement still ends it. Range-free, so editing the block cannot leave
+      # --help truncated the way a hardcoded `sed -n '3,24p'` would.
+      awk 'NR>2 { if (/^#/) print; else if ($0 !~ /^[[:space:]]*$/) exit }' "$0"
       exit 0
       ;;
     *)
@@ -97,13 +165,18 @@ while [[ $# -gt 0 ]]; do
         shift
       else
         echo "Unknown argument: $1" >&2
-        echo "Usage: $0 [desktop|app|android|build] [options…] [--install]" >&2
+        echo "Usage: $0 [desktop|app|android|ohos|build] [options…] [--install]" >&2
         echo "Try: $0 --help" >&2
         exit 2
       fi
       ;;
   esac
 done
+
+if [[ "$MODE" != "ohos" && -n "$OHOS_DEVICE" ]]; then
+  echo "--device requires mode 'ohos' (got: $MODE)" >&2
+  exit 2
+fi
 
 if [[ ${#BUILD_ARGS[@]} -gt 0 && "$MODE" != "build" ]]; then
   echo "Build flags require mode 'build' (got: $MODE)" >&2
@@ -206,6 +279,130 @@ EOF
       exec cargo tauri android dev "${ANDROID_ARGS[@]}"
     else
       exec cargo tauri android dev
+    fi
+    ;;
+  ohos)
+    echo "==> Preparing HarmonyOS env (SDK / hvigor / hdc from DevEco Studio)"
+    # shellcheck disable=SC1090
+    eval "$(node scripts/build/detect-env.mjs --export-ohos-env)"
+
+    HVIGORW="${OHOS_HVIGORW:?hvigorw not found — install DevEco Studio or set DEVECO_STUDIO_HOME}"
+    BUNDLE_NAME="${OHOS_BUNDLE_NAME:-com.crintsoft.mindforge}"
+    OUT_DIR="$ROOT_DIR/ohos/entry/build/default/outputs/default"
+
+    if [[ "$OHOS_CLEAN" -eq 1 ]]; then
+      echo "==> Removing ohos build outputs"
+      rm -rf "$ROOT_DIR/ohos/entry/build" \
+             "$ROOT_DIR/ohos/entry/.preview" \
+             "$ROOT_DIR/ohos/.hvigor" \
+             "$ROOT_DIR/ohos/build"
+      echo "Done. (rawfile/www left in place — rebuild it with --sync-only)"
+      exit 0
+    fi
+
+    if [[ "$OHOS_OPEN" -eq 1 ]]; then
+      if [[ "$(uname -s)" == "Darwin" ]]; then
+        open -a "${DEVECO_STUDIO_HOME:-/Applications/DevEco-Studio.app}" "$ROOT_DIR/ohos"
+      else
+        echo "Open this folder in DevEco Studio: $ROOT_DIR/ohos"
+      fi
+    fi
+
+    # `hdc` reaches the exported PATH above, so this is a real binary by now.
+    hdc_cmd() {
+      if [[ -n "$OHOS_DEVICE" ]]; then
+        hdc -t "$OHOS_DEVICE" "$@"
+      else
+        hdc "$@"
+      fi
+    }
+
+    if [[ "$OHOS_LOGS" -eq 1 ]]; then
+      echo "==> Streaming hilog (Ctrl-C to stop) — tag MindForge.Diagnostics"
+      echo "    Also useful: any MindForge.* tag is this app."
+      # Not `exec`: this is a pipeline, and exec cannot replace one. The
+      # line-buffered grep keeps output live rather than block-buffered.
+      hdc_cmd shell hilog | grep --line-buffered -E "MindForge\."
+      exit 0
+    fi
+
+    echo "==> Building frontend + syncing bundle into rawfile"
+    pnpm build:ohos
+
+    if [[ "$OHOS_SYNC_ONLY" -eq 1 ]]; then
+      echo "==> Stopping before hvigor (--sync-only)."
+      echo "    Assemble in DevEco Studio, or re-run without --sync-only."
+      exit 0
+    fi
+
+    BUILD_MODE="debug"
+    if [[ "$OHOS_RELEASE" -eq 1 ]]; then
+      BUILD_MODE="release"
+    fi
+
+    # Before hvigor, not after: with -enable-property-obfuscation a method that
+    # fell out of obfuscation-rules.txt is removed silently, so the build would
+    # otherwise succeed and ship a bridge missing a method. Fails the script.
+    echo "==> Checking bridge names survive obfuscation"
+    node scripts/build/check-ohos-bridge.mjs
+
+    # Also before hvigor, because hvigor's own signing errors point at the wrong
+    # thing ("no signature file" / "check the keyAlias"). This names the actual
+    # broken link. Exits 0 when signing is simply not configured.
+    echo "==> Checking signing configuration"
+    node scripts/build/check-ohos-signing.mjs
+
+    echo "==> Assembling HAP (buildMode=$BUILD_MODE)"
+    # --no-daemon on purpose: the daemon caches DEVECO_SDK_HOME from whenever it
+    # first started, so pointing the shell at a different SDK would otherwise
+    # fail with a stale-path error that looks like a config bug.
+    (cd "$ROOT_DIR/ohos" && "$HVIGORW" \
+      --mode module -p product=default -p "buildMode=$BUILD_MODE" \
+      assembleHap --no-daemon)
+
+    SIGNED="$OUT_DIR/entry-default-signed.hap"
+    UNSIGNED="$OUT_DIR/entry-default-unsigned.hap"
+
+    if [[ "$OHOS_DEPLOY" -eq 1 || "$OHOS_RUN" -eq 1 ]]; then
+      if [[ ! -f "$SIGNED" ]]; then
+        echo "" >&2
+        echo "No signed HAP at $SIGNED" >&2
+        echo "" >&2
+        echo "The HAP builds fine but cannot be installed unsigned. Signing needs a" >&2
+        echo "Huawei account and cannot be done from this script:" >&2
+        echo "" >&2
+        echo "  1. Open $ROOT_DIR/ohos in DevEco Studio" >&2
+        echo "  2. Sign in (File > Project Structure > Signing Configs)" >&2
+        echo "  3. Tick 'Automatically generate signature' for $BUNDLE_NAME" >&2
+        echo "  4. Run once from the IDE — it writes $SIGNED" >&2
+        echo "" >&2
+        echo "Then re-run this command. See ohos/README.md." >&2
+        exit 1
+      fi
+
+      echo "==> Deploying to device"
+      hdc_cmd install -r "$SIGNED"
+
+      if [[ "$OHOS_RUN" -eq 1 ]]; then
+        echo "==> Starting $BUNDLE_NAME/EntryAbility"
+        hdc_cmd shell aa start -a EntryAbility -b "$BUNDLE_NAME"
+        echo ""
+        echo "Logs: $0 ohos --logs"
+      fi
+      exit 0
+    fi
+
+    echo ""
+    if [[ -f "$SIGNED" ]]; then
+      echo "Signed HAP:   $SIGNED"
+      echo ""
+      echo "Next: $0 ohos --run          # install + start on the connected device"
+    else
+      echo "Unsigned HAP: $UNSIGNED"
+      echo ""
+      echo "Runnable locally, but not installable: signing is not configured."
+      echo "Open $ROOT_DIR/ohos in DevEco Studio and sign in once — see ohos/README.md."
+      echo "After that, $0 ohos --run installs and starts it."
     fi
     ;;
   build)

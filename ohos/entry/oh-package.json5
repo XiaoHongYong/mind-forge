@@ -1,0 +1,9 @@
+{
+  "name": "entry",
+  "version": "0.1.0",
+  "description": "MindForge entry HAP",
+  "main": "",
+  "author": "MindForge",
+  "license": "MIT",
+  "dependencies": {}
+}

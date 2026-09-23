@@ -5,9 +5,14 @@ import './i18n';
 import App from './App';
 import { ConnectorProvider } from './app-core/connectors/provider';
 import { createConnectorRegistry } from './platform/bootstrap';
+import { installOhosDiagnostics } from './platform/ohosDiagnostics';
 import { applyCanvasPalette } from './utils/canvasPalette';
 
 const connectorRegistry = createConnectorRegistry();
+
+// No-op outside the HarmonyOS shell. Before render, so a failure during module
+// init is already being recorded by the time the report is written.
+installOhosDiagnostics();
 
 // Apply persisted theme synchronously before first render to avoid flash.
 (function applyStoredTheme() {

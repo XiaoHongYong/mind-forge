@@ -1,0 +1,61 @@
+{
+  "module": {
+    "name": "entry",
+    "type": "entry",
+    "description": "$string:module_desc",
+    "mainElement": "EntryAbility",
+    "deviceTypes": [
+      "phone",
+      "tablet",
+      "2in1"
+    ],
+    "deliveryWithInstall": true,
+    "installationFree": false,
+    "pages": "$profile:main_pages",
+    // Local-only app: `ohos.permission.INTERNET` is deliberately NOT requested.
+    // The web assets are served from a virtual origin handled entirely by
+    // onInterceptRequest, so no socket is ever opened. Not declaring INTERNET
+    // turns "did a request escape to the network?" into a hard failure instead
+    // of a silent leak — see AGENTS.md (仅本地) and
+    // frontend_app/offline_capability_contract.json.
+    "requestPermissions": [
+      {
+        // Needed by fileShare.persistPermission / activatePermission so the
+        // "recent files" list can re-open a document after a restart.
+        // Declared as `normal` level (system_grant), see the SDK permission
+        // table. Whether the device actually honours it is exactly what the
+        // in-app diagnostics screen probes (see web/Diagnostics.ets).
+        "name": "ohos.permission.FILE_ACCESS_PERSIST",
+        "reason": "$string:perm_file_access_persist_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      }
+    ],
+    "abilities": [
+      {
+        "name": "EntryAbility",
+        "srcEntry": "./ets/entryability/EntryAbility.ets",
+        "description": "$string:EntryAbility_desc",
+        "icon": "$media:layered_image",
+        "label": "$string:EntryAbility_label",
+        "startWindowIcon": "$media:startIcon",
+        "startWindowBackground": "$color:start_window_background",
+        "exported": true,
+        "skills": [
+          {
+            "entities": [
+              "entity.system.home"
+            ],
+            "actions": [
+              "action.system.home"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

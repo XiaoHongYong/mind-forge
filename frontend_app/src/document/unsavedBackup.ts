@@ -1,5 +1,11 @@
 import type { MindMapTree } from '../types';
 import { isTauri } from '../storage';
+import {
+  isOhos,
+  ohosDeleteAppData,
+  ohosReadAppData,
+  ohosWriteAppData,
+} from '../platform/ohos';
 import { readFileBytes } from './fileAccess';
 import { newSessionId, type DocumentSession } from './types';
 
@@ -90,29 +96,50 @@ function parseBackupPayload(raw: string): UnsavedBackupPayload | null {
   }
 }
 
+/**
+ * True when the app has private storage of its own to fall back on.
+ *
+ * The browser build does not, which is why it relies on `localStorage` alone —
+ * evictable, but better than nothing. Both native shells do.
+ */
+function hasAppData(): boolean {
+  return isTauri() || isOhos();
+}
+
 async function invokeWrite(key: string, payloadJson: string): Promise<void> {
+  if (isOhos()) {
+    await ohosWriteAppData(key, payloadJson);
+    return;
+  }
   const { invoke } = await import('@tauri-apps/api/core');
   await invoke('write_unsaved_backup', { path: key, payloadJson });
 }
 
 async function invokeRead(key: string): Promise<string | null> {
+  if (isOhos()) {
+    return ohosReadAppData(key);
+  }
   const { invoke } = await import('@tauri-apps/api/core');
   return invoke<string | null>('read_unsaved_backup', { path: key });
 }
 
 async function invokeDelete(key: string): Promise<void> {
+  if (isOhos()) {
+    await ohosDeleteAppData(key);
+    return;
+  }
   const { invoke } = await import('@tauri-apps/api/core');
   await invoke('delete_unsaved_backup', { path: key });
 }
 
-/** App-data JSON slot (same store as unsaved backups). No-op outside Tauri. */
+/** App-data JSON slot (same store as unsaved backups). No-op outside the native shells. */
 export async function writeAppDataSlot(key: string, payloadJson: string): Promise<void> {
-  if (!isTauri()) return;
+  if (!hasAppData()) return;
   await invokeWrite(key, payloadJson);
 }
 
 export async function readAppDataSlot(key: string): Promise<string | null> {
-  if (!isTauri()) return null;
+  if (!hasAppData()) return null;
   try {
     return await invokeRead(key);
   } catch {
@@ -127,7 +154,7 @@ export async function writeUnsavedBackup(input: {
   tree: MindMapTree;
   formatId: DocumentSession['formatId'];
 }): Promise<void> {
-  if (!isTauri()) return;
+  if (!hasAppData()) return;
 
   const neverSaved = !input.path;
   let sourceHash = '';
@@ -149,7 +176,7 @@ export async function writeUnsavedBackup(input: {
 }
 
 export async function deleteUnsavedBackup(path: string | null): Promise<void> {
-  if (!isTauri()) return;
+  if (!hasAppData()) return;
   try {
     await invokeDelete(backupKeyFor(path));
   } catch {
@@ -166,7 +193,7 @@ export async function takeMatchingUnsavedBackup(
   path: string,
   diskBytes: Uint8Array,
 ): Promise<UnsavedBackupPayload | null> {
-  if (!isTauri() || !path) return null;
+  if (!hasAppData() || !path) return null;
 
   let raw: string | null;
   try {
@@ -197,7 +224,7 @@ export async function takeMatchingUnsavedBackup(
  * after a successful read so it is not restored twice.
  */
 export async function takeUntitledUnsavedBackup(): Promise<UnsavedBackupPayload | null> {
-  if (!isTauri()) return null;
+  if (!hasAppData()) return null;
 
   let raw: string | null;
   try {

@@ -1,0 +1,28 @@
+# MindForge release obfuscation rules.
+#
+# The ArkWeb bridge (see src/main/ets/web/NativeBridge.ets) is reached from
+# JavaScript by name through javaScriptProxy — same class of problem as Android
+# R8 renaming members that JS still addresses by string. The proxy object name
+# (BRIDGE_OBJECT_NAME) and every method in `methodList` / `asyncMethodList` must
+# survive property obfuscation, otherwise the injected `window.MindForgeNative`
+# loses those members at runtime.
+-enable-property-obfuscation
+-enable-toplevel-obfuscation
+-enable-filename-obfuscation
+
+# Kept property names = BRIDGE_OBJECT_NAME ∪ SYNC_METHODS ∪ ASYNC_METHODS.
+# `pnpm check:ohos-bridge` enforces that; do not edit this list by hand without it.
+-keep-property-name
+MindForgeNative
+openDocument
+saveDocument
+readFile
+writeFile
+persistUri
+activateUri
+readAppData
+writeAppData
+deleteAppData
+openExternal
+diagnostics
+log

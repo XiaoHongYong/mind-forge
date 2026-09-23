@@ -1,0 +1,60 @@
+{
+  "app": {
+    // Signing is configured locally in DevEco Studio (File > Project Structure >
+    // Signing Configs). It is deliberately not committed: certificates and
+    // profiles are per-developer secrets. See ohos/README.md.
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "/Users/henry_xiao/.ohos/config/default_ohos_1HB_43OmFuETuBZngsaYmU0xgLfjsGGa6ggslvDVJqE=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001BB3F4090C57067414090507E82EA96D2AD35C56E21C5D0625D43E2710D2713C35B798FDA3AD44A7",
+          "profile": "/Users/henry_xiao/.ohos/config/default_ohos_1HB_43OmFuETuBZngsaYmU0xgLfjsGGa6ggslvDVJqE=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "/Users/henry_xiao/.ohos/config/default_ohos_1HB_43OmFuETuBZngsaYmU0xgLfjsGGa6ggslvDVJqE=.p12",
+          "storePassword": "0000001B608902302C88B46A382AD18D53980739D8A006DEE5F0B3EDF12589BDFC59628C8C8E3C18B0BB93"
+        }
+      }
+    ],
+    "products": [
+      {
+        "name": "default",
+        // Binds product `default` to the `default` entry in `signingConfigs`.
+        // Without this the config is merely declared, never applied, and
+        // hvigor reports "No signingConfig found for product default".
+        "signingConfig": "default",
+        // `compatibleSdkVersion` is the floor the shell claims to run on:
+        // HarmonyOS NEXT (API 12). `targetSdkVersion` is what it is built and
+        // tested against. See ohos/README.md — the API-12 claim is the one
+        // thing in this project that has not been exercised on real hardware.
+        "compatibleSdkVersion": "5.0.0(12)",
+        "targetSdkVersion": "6.0.2(22)",
+        "runtimeOS": "HarmonyOS",
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug",
+      },
+      {
+        "name": "release"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    }
+  ]
+}

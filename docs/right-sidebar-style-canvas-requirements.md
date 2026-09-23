@@ -184,7 +184,7 @@ MindForge 入边颜色目前跟子节点 `color`；尚无独立 edge 字段。
 
 ## 5. 数据与兼容性约束
 
-1. 新增节点样式字段须进入 `MindMapTreeNode`，并保证 **mmforge 往返保真**（`roundTrip` 门禁加 mask）。
+1. 新增节点样式字段须进入 `MindMapTreeNode`，并保证 **mmforge 往返保真**（`roundTrip` 检查加 mask）。
 2. FreeMind / Freeplane / WiseMapping 导入：能映射的映射（如 `font`、`shape`、`bgColor`）；映射不了的静默忽略，不丢其他数据。
 3. 导出：至少在 mmforge 完整保留；对外格式按现有能力增量（不必第一期全对齐）。
 4. 所有样式变更进入 Undo/Redo 历史。

@@ -1,4 +1,5 @@
 import { isTauri } from '../storage';
+import { isOhos, ohosSaveDocument, ohosWriteFile, rememberGrant } from '../platform/ohos';
 
 function buildDialogFilters(filename: string): Array<{ name: string; extensions: string[] }> | undefined {
   const extension = filename.split('.').pop()?.trim().toLowerCase();
@@ -60,12 +61,35 @@ async function downloadBlobInTauri(blob: Blob, filename: string): Promise<boolea
   return true;
 }
 
+/**
+ * Exports through the system save dialog.
+ *
+ * Same reasoning as the desktop path below: ArkWeb does not honour a plain
+ * `<a download>` any more than WKWebView does — it needs a `WebDownloadDelegate`
+ * to do anything, and without one the click is silently swallowed. The native
+ * dialog is the only route that reliably produces a file.
+ */
+async function downloadBlobInOhos(blob: Blob, filename: string): Promise<void> {
+  const ref = await ohosSaveDocument(filename, buildDialogFilters(filename) ?? []);
+  if (!ref) {
+    // Cancelled. Handled — do not fall through to the browser path.
+    return;
+  }
+  await ohosWriteFile(ref.uri, new Uint8Array(await blob.arrayBuffer()));
+  await rememberGrant(ref.uri);
+}
+
 export async function downloadBlob(blob: Blob, filename: string) {
   if (isTauri()) {
     // On desktop this is the only path that works — the browser <a download>
     // fallback below is a no-op in WKWebView/WebKitGTK, so a silent catch here
     // would turn a real failure into "nothing happened".
     await downloadBlobInTauri(blob, filename);
+    return;
+  }
+
+  if (isOhos()) {
+    await downloadBlobInOhos(blob, filename);
     return;
   }
 

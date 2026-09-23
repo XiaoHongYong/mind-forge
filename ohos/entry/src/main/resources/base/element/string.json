@@ -1,0 +1,20 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "MindForge mind map editor"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "MindForge mind map editor"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "MindForge"
+    },
+    {
+      "name": "perm_file_access_persist_reason",
+      "value": "Keeps access to the mind map files you opened, so recent files can be reopened after a restart"
+    }
+  ]
+}

@@ -8,6 +8,7 @@ import { useTranslation } from 'react-i18next';
 import { ChevronDown, ChevronRight, X } from 'lucide-react';
 import type { RecentFileEntry } from '../document/types';
 import { formatRelativeModified } from '../document/relativeTime';
+import { shellDisplayPath } from '../platform/ohos';
 import { scrollDeltaToReveal } from './mindmap/outlineScroll';
 import { findNodePath } from './MindMapHelpers';
 import type { MindMapTree, MindMapTreeNode } from '../types';
@@ -231,7 +232,7 @@ export function DocumentSidebar({
                     {modifiedLabel && (
                       <span className="mm-doc-side-recent-meta">{modifiedLabel}</span>
                     )}
-                    <span className="mm-doc-side-recent-path">{entry.path}</span>
+                    <span className="mm-doc-side-recent-path">{shellDisplayPath(entry.path)}</span>
                   </button>
                   <button
                     type="button"

@@ -22,11 +22,22 @@ import {
   writeFileBytes,
 } from './fileAccess';
 import { isTauri } from '../storage';
+import { isOhos, shellDisplayPath } from '../platform/ohos';
 import { downloadBlob } from '../utils/download';
 import { deleteUnsavedBackup, takeMatchingUnsavedBackup, takeUntitledUnsavedBackup, sessionFromUntitledBackup } from './unsavedBackup';
 
 function fileNameFromPath(path: string): string {
   return path.split(/[/\\]/).pop() ?? path;
+}
+
+/**
+ * True when the shell can read and write a user-chosen document by reference.
+ *
+ * Both native shells can; the browser cannot, which is why Save falls through
+ * to a download there.
+ */
+function hasFileSystem(): boolean {
+  return isTauri() || isOhos();
 }
 
 async function parseBytes(
@@ -45,9 +56,13 @@ async function parseBytes(
 
 export async function openDocumentFromPath(path: string): Promise<DocumentSession> {
   const bytes = await readFileBytes(path);
-  const formatId = formatIdFromPath(path);
-  const title = titleFromPath(path);
-  const root = await parseBytes(bytes, formatId, title, fileNameFromPath(path));
+  // `path` stays the raw reference — it is the key the backup and recent-file
+  // stores are written under, so it must round-trip byte-for-byte. Only the
+  // title and format are read off the human-readable form.
+  const shown = shellDisplayPath(path);
+  const formatId = formatIdFromPath(shown);
+  const title = titleFromPath(shown);
+  const root = await parseBytes(bytes, formatId, title, fileNameFromPath(shown));
   const session: DocumentSession = {
     id: newSessionId(),
     path,
@@ -70,7 +85,7 @@ export async function openDocumentFromPath(path: string): Promise<DocumentSessio
 }
 
 export async function openDocumentViaDialog(): Promise<DocumentSession | null> {
-  if (isTauri()) {
+  if (hasFileSystem()) {
     const path = await pickOpenPath();
     if (!path) return null;
     return openDocumentFromPath(path);
@@ -137,8 +152,10 @@ export async function saveDocument(
   tree: MindMapTree,
   title: string,
 ): Promise<DocumentSession> {
-  if (session.path && isTauri()) {
-    const formatId = exportFormatIdForPath(session.path);
+  if (session.path && hasFileSystem()) {
+    // Read off the display form so a trailing `?`/`#` on a picker URI cannot
+    // defeat the extension match and silently pick the wrong serializer.
+    const formatId = exportFormatIdForPath(shellDisplayPath(session.path));
     const bytes = await serializeSession(tree, title, formatId);
     await writeFileBytes(session.path, bytes);
     await deleteUnsavedBackup(session.path);
@@ -160,10 +177,10 @@ export async function saveDocumentAs(
         : (session.formatId as ExportFormatId);
   const suggested = defaultSaveName(title, formatId);
 
-  if (isTauri()) {
+  if (hasFileSystem()) {
     const path = await pickSavePath(session.path ?? suggested);
     if (!path) return session;
-    const resolvedFormat = exportFormatIdForPath(path);
+    const resolvedFormat = exportFormatIdForPath(shellDisplayPath(path));
     const bytes = await serializeSession(tree, title, resolvedFormat);
     await writeFileBytes(path, bytes);
     // Save As always clears the untitled slot; also drop any previous path slot.
@@ -175,7 +192,7 @@ export async function saveDocumentAs(
     return {
       ...session,
       path,
-      title: titleFromPath(path) || title,
+      title: titleFromPath(shellDisplayPath(path)) || title,
       tree,
       formatId: resolvedFormat,
       dirty: false,

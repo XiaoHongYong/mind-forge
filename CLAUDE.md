@@ -3,6 +3,7 @@
 本仓库的 agent 契约见
 **`docs/file-document-architecture.md`**（文档打开 / 保存模型）与
 **`AGENTS.md`**（隐私 / 仅本地规则）。改任何东西之前先读这两份。
+鸿蒙壳另有 **`docs/harmonyos-architecture.md`**。
 
 本文件说明的是：**这里的代码如何测试，以及为什么「显而易见」的测法在这里行不通。**
 
@@ -15,7 +16,14 @@
 | 壳 | 路由 | Tauri IPC | 后端 |
 |---|---|---|---|
 | `desktop/`（Tauri） | `BrowserRouter` | 有 | 无 |
+| `ohos/`（ArkWeb） | `BrowserRouter` | 无（走 `window.MindForgeNative` 桥） | 无 |
 | 托管的兄弟应用（若有） | `BrowserRouter` | 无 | 有 |
+
+鸿蒙壳的桥还有一类**单元测试同样看不见**的 bug：桥是**按名字**抵达的，
+release 构建开了属性混淆（同类于 Android R8）。任何没进
+`ohos/entry/obfuscation-rules.txt` `-keep-property-name` 的桥接属性名
+（对象名 + 方法名）都会被改名，注入的对象就悄悄少一个成员——编译通过、
+运行不报错，只是某次调用不再解析。所以 `pnpm check:ohos` 会**失败**而不是警告。
 
 单元测试是把组件**隔离渲染**的，也就是组件要什么上下文，测试就给什么。
 因此一个无条件调用 `useNavigate()` 的组件可以过掉所有单元测试，然后在
@@ -40,7 +48,7 @@
 | **壳层冒烟**（Playwright，按壳） | 缺上下文、缺 IPC、白屏 | ~1 分钟 |
 | **交互**（Playwright） | 面板互不关闭、对话框困住焦点 | ~1 分钟 |
 | **桌面 E2E**（WebdriverIO + `@wdio/tauri-service`） | 原生菜单、文件对话框、真实 WebView | 分钟级 |
-| **构建门禁**（scripts） | 版本漂移、离线对等、格式往返保真 | 秒级 |
+| **构建检查**（scripts） | 版本漂移、离线对等、格式往返保真、鸿蒙桥接属性名被混淆 | 秒级 |
 
 ---
 
@@ -48,7 +56,7 @@
 
 ```
 pre-commit（~10 s）tsc --noEmit + 对变更文件跑 vitest
-pre-push（~90 s）全量 vitest + 往返门禁 + 版本门禁
+pre-push（~90 s）全量 vitest + 往返检查 + 版本检查
 CI（分钟级）以上全部 + cargo check/test
 release 对真实桌面构建跑 WebdriverIO
 ```
@@ -62,7 +70,7 @@ release 对真实桌面构建跑 WebdriverIO
 **冒烟测试的主断言是「什么都没抛错」。** 收集 `pageerror` 与 `console.error`，
 点一遍壳层，断言列表为空且 `#root` 仍有子节点（白屏检测）。
 
-**只会 warn 的门禁不算门禁。** 值得跑的检查就该失败。
+**只会 warn 的检查不算数。** 值得跑的检查就该失败。
 
 **每种新格式都要在** `utils/__tests__/roundTrip.test.ts` **里加保真 mask 条目**，
 不要另起一次性测试文件。
@@ -77,6 +85,10 @@ release 对真实桌面构建跑 WebdriverIO
 pnpm install
 pnpm dev:app          # frontend_app Vite
 pnpm test:app         # vitest
-pnpm check:roundtrip  # 导入/导出保真门禁
+pnpm check:roundtrip  # 导入/导出保真检查
 pnpm tauri:build      # 桌面打包
+
+pnpm build:ohos       # 前端构建 + 同步进 ohos rawfile
+pnpm check:ohos       # 同步 + 桥接属性名 keep 检查（CI）
+./run.sh ohos         # 构建 HAP（--run 装到设备）
 ```

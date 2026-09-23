@@ -1,10 +1,18 @@
 import { isTauri } from '../storage';
+import { isOhos, ohosOpenExternal } from '../platform/ohos';
 
 export async function openExternalUrl(url: string): Promise<void> {
   try {
     if (isTauri()) {
       const { open } = await import('@tauri-apps/plugin-shell');
       await open(url);
+      return;
+    }
+    if (isOhos()) {
+      // `window.open` cannot work here: the shell refuses every request that is
+      // not its own bundle, so an external URL would land on a 403 page rather
+      // than in the browser. Only the shell can hand a link to the system.
+      await ohosOpenExternal(url);
       return;
     }
   } catch (e) {

@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
 import { DocumentTabBar } from '../components/DocumentTabBar';
 import { DocumentSidebar, type DocumentSidebarTab } from '../components/DocumentSidebar';
@@ -9,6 +9,13 @@ import type { LinkableFile } from '../components/MindMapFileLinkDialog';
 import { useDocumentStore, writeUnsavedBackup, restoreOrCreateNew, deleteUnsavedBackup, flushWorkspaceSave, restoreWorkspaceOnce } from '../document';
 import type { DocumentSession } from '../document/types';
 import { documentWindowCaption, setWindowCaption } from '../platform/windowCaption';
+import {
+  getPersistCapability,
+  isOhos,
+  probePersistCapability,
+  shellDisplayPath,
+  subscribePersistCapability,
+} from '../platform/ohos';
 import { isTauri } from '../storage';
 import type { MindMapTree, MindMapTreeNode, NodeAttachmentRef } from '../types';
 import { fromBase64, toBase64 } from '../utils/base64';
@@ -17,6 +24,22 @@ import { downloadBlob } from '../utils/download';
 import { buildExportFileBaseName as buildExportName } from '../utils/exportFileName';
 import { EXPORT_FORMATS, type ExportFormat } from '../utils/exportFormats';
 import { useUiStore } from '../store/ui';
+
+/**
+ * Whether this shell can reopen a document it is not currently holding open.
+ *
+ * Desktop always can — paths are absolute and permanent. HarmonyOS can only if
+ * the device honours persisted URI grants, which is exactly what
+ * `probePersistCapability` asks; on a device that refuses (error 801), a recent
+ * entry would be a button that always fails, so the sidebar hides it instead.
+ */
+function usePersistentFileAccess(): boolean {
+  const supported = useSyncExternalStore(subscribePersistCapability, getPersistCapability);
+  useEffect(() => {
+    void probePersistCapability();
+  }, []);
+  return supported;
+}
 
 export function EditorPage() {
   const { t } = useTranslation();
@@ -42,6 +65,7 @@ export function EditorPage() {
   );
   const formatSidebarOpen = useUiStore((s) => s.formatSidebarOpen);
   const setFormatSidebarOpen = useUiStore((s) => s.setFormatSidebarOpen);
+  const persistFileAccess = usePersistentFileAccess();
 
   const isNarrowViewport = () =>
     typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches;
@@ -128,7 +152,7 @@ export function EditorPage() {
 
   const flushUnsavedBackup = useCallback(async () => {
     const state = backupStateRef.current;
-    if (!dirtyRef.current || !state.tree || !isTauri()) return;
+    if (!dirtyRef.current || !state.tree || (!isTauri() && !isOhos())) return;
     try {
       await writeUnsavedBackup({
         path: state.path,
@@ -540,7 +564,7 @@ export function EditorPage() {
               recent={recent}
               recentBusy={recentBusy}
               recentError={recentError}
-              canReopenByPath={isTauri()}
+              canReopenByPath={isTauri() || persistFileAccess}
               onOpenRecent={(path) => { void handleOpenRecent(path); }}
               onRemoveRecent={removeRecent}
               tree={currentTree}
@@ -590,5 +614,8 @@ export function EditorPage() {
 }
 
 function fileName(path: string): string {
-  return path.split(/[/\\]/).pop() ?? path;
+  // Shown to the user, so a HarmonyOS picker URI loses its scheme and escaping
+  // first — otherwise the window caption reads `file://docs/.../My%20Map.mmforge`.
+  const shown = shellDisplayPath(path);
+  return shown.split(/[/\\]/).pop() ?? shown;
 }

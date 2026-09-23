@@ -3,7 +3,7 @@
  * Looks in env vars and common install directories (no network).
  */
 
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { homedir, platform as osPlatform, arch as osArch } from 'node:os';
 import { join, delimiter, resolve, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -220,11 +220,121 @@ function detectDocker() {
   return { available: info.ok, docker, reason: info.ok ? null : (info.stderr || 'docker daemon 不可用') };
 }
 
+/**
+ * DevEco Studio ships its own SDK, hvigor, ohpm, Node and hdc. Nothing is
+ * expected on PATH, so every tool is looked up relative to the IDE install
+ * first and only then via PATH.
+ */
+function detectHarmony() {
+  const home = homedir();
+  const appCandidates = [
+    process.env.DEVECO_STUDIO_HOME,
+    '/Applications/DevEco-Studio.app',
+    join(home, 'Applications/DevEco-Studio.app'),
+    process.env.LOCALAPPDATA && join(process.env.LOCALAPPDATA, 'Huawei', 'DevEco Studio'),
+    'C:\\Program Files\\Huawei\\DevEco Studio',
+    join(home, 'deveco-studio'),
+    '/opt/deveco-studio',
+  ].filter(Boolean);
+  const app = firstExisting(appCandidates);
+  // macOS bundles under Contents/; Linux and Windows put the same trees at the
+  // top level, so one probe covers both layouts.
+  const root = app && existsSync(join(app, 'Contents')) ? join(app, 'Contents') : app;
+
+  const sdk = firstExisting([
+    process.env.DEVECO_SDK_HOME,
+    root && join(root, 'sdk'),
+    join(home, 'Library/Huawei/Sdk'),
+  ].filter(Boolean));
+
+  const hvigorw = firstExisting([root && join(root, 'tools/hvigor/bin/hvigorw'), which('hvigorw')].filter(Boolean));
+  const ohpm = firstExisting([root && join(root, 'tools/ohpm/bin/ohpm'), which('ohpm')].filter(Boolean));
+  const hdc = firstExisting([
+    sdk && join(sdk, 'default/openharmony/toolchains/hdc'),
+    sdk && join(sdk, 'default/openharmony/toolchains/hdc.exe'),
+    which('hdc'),
+  ].filter(Boolean));
+
+  // The installed API level decides whether the `compatibleSdkVersion` claim in
+  // build-profile.json5 can be exercised on this machine at all.
+  const pkgFile = sdk && join(sdk, 'default/sdk-pkg.json');
+  let apiVersion = null;
+  let sdkName = null;
+  if (pkgFile && existsSync(pkgFile)) {
+    try {
+      const meta = JSON.parse(readFileSync(pkgFile, 'utf8')).data ?? {};
+      apiVersion = typeof meta.apiVersion === 'string' ? meta.apiVersion : null;
+      sdkName = typeof meta.displayName === 'string' ? meta.displayName : null;
+    } catch { /* unreadable metadata is not fatal */ }
+  }
+
+  return {
+    app,
+    sdk,
+    hvigorw,
+    ohpm,
+    hdc,
+    apiVersion,
+    sdkName,
+    signingConfigured: detectOhosSigning(),
+    // Which declaration the shell claims to support, so the report can flag a
+    // mismatch with what is actually installed.
+    declaredCompatible: detectOhosDeclaredSdk(),
+    // Building needs hvigor plus an SDK; installing one additionally needs hdc.
+    buildable: Boolean(hvigorw && sdk),
+    installable: Boolean(hdc),
+  };
+}
+
+/**
+ * Whether `ohos/build-profile.json5` has signing material filled in.
+ *
+ * Deliberately a heuristic: the file is JSON5 and DevEco rewrites it, so this
+ * only asks whether `signingConfigs` is still an empty array. That answers the
+ * one question which actually blocks a device run — "has anyone signed this
+ * yet?" — without pulling in a JSON5 parser to answer it exactly.
+ */
+function detectOhosSigning() {
+  const profile = join(REPO_ROOT, 'ohos/build-profile.json5');
+  if (!existsSync(profile)) return false;
+  try {
+    return !/"signingConfigs"\s*:\s*\[\s*\]/.test(readFileSync(profile, 'utf8'));
+  } catch {
+    return false;
+  }
+}
+
+/** The `compatibleSdkVersion` the shell declares, e.g. `5.0.0(12)`. */
+function detectOhosDeclaredSdk() {
+  const profile = join(REPO_ROOT, 'ohos/build-profile.json5');
+  if (!existsSync(profile)) return null;
+  try {
+    const match = /"compatibleSdkVersion"\s*:\s*"([^"]+)"/.exec(readFileSync(profile, 'utf8'));
+    return match ? match[1] : null;
+  } catch {
+    return null;
+  }
+}
+
 function detectProjectMobile() {
   return {
     androidInitialized: existsSync(join(SRC_TAURI, 'gen/android')) || existsSync(join(REPO_ROOT, 'src-tauri/gen/android')),
     linuxDockerFile: existsSync(join(REPO_ROOT, 'scripts/linux-build.Dockerfile')),
+    ohosInitialized: existsSync(join(REPO_ROOT, 'ohos/build-profile.json5')),
+    ohosBundleName: detectOhosBundleName(),
   };
+}
+
+/** The bundle id the HAP installs under, read from `AppScope/app.json5`. */
+function detectOhosBundleName() {
+  const appJson = join(REPO_ROOT, 'ohos/AppScope/app.json5');
+  if (!existsSync(appJson)) return null;
+  try {
+    const match = /"bundleName"\s*:\s*"([^"]+)"/.exec(readFileSync(appJson, 'utf8'));
+    return match ? match[1] : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -237,6 +347,7 @@ export function detectEnvironment() {
   const java = detectJava();
   const android = detectAndroid();
   const docker = detectDocker();
+  const harmony = detectHarmony();
   const project = detectProjectMobile();
 
   /** @type {Record<string, { buildable: boolean, mode: string, notes: string[] }>} */
@@ -274,6 +385,27 @@ export function detectEnvironment() {
         ...(!project.androidInitialized ? ['尚未执行 `cargo tauri android init`（可用 --init-mobile）'] : []),
       ],
     },
+    // Built with hvigor, not with scripts/build/build.mjs — the ohos shell is
+    // ArkTS, so it is outside the Rust/Tauri cross-compile matrix entirely.
+    harmonyos: {
+      buildable: harmony.buildable,
+      mode: 'hvigor',
+      notes: [
+        ...(!project.ohosInitialized ? ['未找到 ohos/build-profile.json5'] : []),
+        ...(!harmony.app ? ['未找到 DevEco Studio（可用 $DEVECO_STUDIO_HOME 指定）'] : []),
+        ...(!harmony.sdk ? ['未找到 HarmonyOS SDK（可用 $DEVECO_SDK_HOME 指定）'] : []),
+        ...(!harmony.hvigorw ? ['未找到 hvigorw'] : []),
+        ...(!harmony.signingConfigured
+          ? ['未配置签名 —— 只能构建未签名 HAP，无法安装到设备；需在 DevEco Studio 中登录华为账号生成（见 ohos/README.md）']
+          : []),
+        // Compiling against the newest SDK while claiming an older floor is the
+        // intended configuration — but that floor is a claim nobody has tested.
+        ...(harmony.apiVersion && harmony.declaredCompatible
+          ? [`SDK API ${harmony.apiVersion} 编译；声明兼容 ${harmony.declaredCompatible} 的设备未实测`]
+          : []),
+        ...(!harmony.installable ? ['未找到 hdc —— 无法用 run.sh ohos --install/--run 操作设备'] : []),
+      ],
+    },
   };
 
   return {
@@ -283,6 +415,7 @@ export function detectEnvironment() {
     xcode,
     java,
     android,
+    harmony,
     docker,
     project,
     targets,
@@ -299,6 +432,10 @@ export function formatDetectReport(env) {
   lines.push(`Java: ${env.java.javaHome || '未找到'}  (${env.java.version || '—'})`);
   lines.push(`Android SDK: ${env.android.sdk || '未找到'}`);
   lines.push(`Android NDK: ${env.android.ndk || '未找到'}`);
+  lines.push(`DevEco Studio: ${env.harmony.app || '未找到'}`);
+  lines.push(`HarmonyOS SDK: ${env.harmony.sdk || '未找到'}${env.harmony.sdkName ? `  (${env.harmony.sdkName}, API ${env.harmony.apiVersion})` : ''}`);
+  lines.push(`hvigorw: ${env.harmony.hvigorw || '未找到'}  hdc: ${env.harmony.hdc || '未找到'}`);
+  lines.push(`HarmonyOS 签名: ${env.harmony.signingConfigured ? '已配置' : '未配置（只能构建未签名 HAP）'}`);
   lines.push(`Docker: ${env.docker.available ? '可用' : '不可用'}`);
   lines.push(`项目 android init: ${env.project.androidInitialized}`);
   lines.push('');
@@ -346,6 +483,44 @@ export function formatAndroidEnvExports(env = detectEnvironment()) {
   return { exports: lines.join('\n'), missing };
 }
 
+/**
+ * Env vars for `hvigorw` in `ohos/`.
+ *
+ * `DEVECO_SDK_HOME` is the one hvigor actually requires — without it the build
+ * fails with "Invalid value of 'DEVECO_SDK_HOME'". `hdc` is added to PATH so
+ * `run.sh ohos --install` can reach a device.
+ *
+ * @returns {{ exports: string, missing: string[] }}
+ */
+export function formatOhosEnvExports(env = detectEnvironment()) {
+  /** @type {string[]} */
+  const missing = [];
+  if (!env.harmony.sdk) missing.push('HarmonyOS SDK（$DEVECO_SDK_HOME，或随 DevEco Studio 安装）');
+  if (!env.harmony.hvigorw) missing.push('hvigorw（随 DevEco Studio 安装）');
+
+  /** @type {string[]} */
+  const lines = [];
+  if (env.harmony.sdk) {
+    lines.push(`export DEVECO_SDK_HOME=${shQuote(env.harmony.sdk)}`);
+  }
+  if (env.harmony.app) {
+    lines.push(`export DEVECO_STUDIO_HOME=${shQuote(env.harmony.app)}`);
+  }
+  if (env.harmony.hvigorw) {
+    lines.push(`export OHOS_HVIGORW=${shQuote(env.harmony.hvigorw)}`);
+  }
+  if (env.harmony.hdc) {
+    const dir = dirname(env.harmony.hdc);
+    const sep = HOST.platform === 'win32' ? ';' : ':';
+    lines.push(`export PATH=${shQuote(`${dir}${sep}${process.env.PATH || ''}`)}`);
+    lines.push(`export OHOS_HDC=${shQuote(env.harmony.hdc)}`);
+  }
+  if (env.project.ohosBundleName) {
+    lines.push(`export OHOS_BUNDLE_NAME=${shQuote(env.project.ohosBundleName)}`);
+  }
+  return { exports: lines.join('\n'), missing };
+}
+
 function isCliMain() {
   const entry = process.argv[1];
   if (!entry) return false;
@@ -361,6 +536,18 @@ if (isCliMain() && process.argv.includes('--export-android-env')) {
   const { exports, missing } = formatAndroidEnvExports();
   if (missing.length) {
     console.error(`Android 开发环境不完整，缺少: ${missing.join('；')}`);
+    process.exit(1);
+  }
+  console.log(exports);
+  process.exit(0);
+}
+
+// CLI: node scripts/build/detect-env.mjs --export-ohos-env
+if (isCliMain() && process.argv.includes('--export-ohos-env')) {
+  const { exports, missing } = formatOhosEnvExports();
+  if (missing.length) {
+    console.error(`HarmonyOS 开发环境不完整，缺少: ${missing.join('；')}`);
+    console.error('安装 DevEco Studio 后重试，或用 $DEVECO_SDK_HOME 指定 SDK。');
     process.exit(1);
   }
   console.log(exports);

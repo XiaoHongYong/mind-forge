@@ -1,5 +1,6 @@
 import type { MindMapTree } from '../types';
 import { isTauri } from '../storage';
+import { isOhos } from '../platform/ohos';
 import { openDocumentFromPath } from './io';
 import { readFileBytes } from './fileAccess';
 import { useDocumentStore } from './store';
@@ -133,7 +134,7 @@ function untitledFromTab(tab: WorkspaceTabRecord): DocumentSession | null {
 
 async function sourceHashesFor(sessions: DocumentSession[]): Promise<Record<string, string>> {
   const hashes: Record<string, string> = {};
-  if (!isTauri()) return hashes;
+  if (!isTauri() && !isOhos()) return hashes;
   for (const session of sessions) {
     if (!session.path || !session.dirty) continue;
     try {
@@ -221,7 +222,7 @@ async function restoreWorkspaceIntoStore(): Promise<boolean> {
     try {
       const opened = await openDocumentFromPath(tab.path);
       let diskHash = '';
-      if (tab.dirty && tab.tree && tab.sourceHash && isTauri()) {
+      if (tab.dirty && tab.tree && tab.sourceHash && (isTauri() || isOhos())) {
         try {
           diskHash = await sha256Hex(await readFileBytes(tab.path));
         } catch {

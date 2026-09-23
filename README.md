@@ -36,7 +36,8 @@ Core components:
 
 1. `frontend_app/` — React + TypeScript editor, i18n, and document session
 2. `desktop/src-tauri/` — Rust / Tauri 2 host and user-path file IO
-3. Local filesystem — plaintext `.mmforge` / interchange files
+3. `ohos/` — HarmonyOS NEXT shell: ArkTS + ArkWeb hosting the same bundle
+4. Local filesystem — plaintext `.mmforge` / interchange files
 
 High-level flow:
 
@@ -48,10 +49,15 @@ High-level flow:
    interchange or image format via a target dialog.
 4. Desktop file IO uses native dialogs plus Tauri `read_user_file` /
    `write_user_file`; the webview FS ACL stays scoped to app directories.
+5. On HarmonyOS the same bundle runs inside ArkWeb, served from an in-memory
+   virtual origin and reaching native file IO through a JS bridge. Because the
+   OS revokes picker grants on exit, "reopen recent" is offered only when the
+   device actually supports persisting them.
 
 Related notes:
 
 - [`docs/file-document-architecture.md`](docs/file-document-architecture.md)
+- [`docs/harmonyos-architecture.md`](docs/harmonyos-architecture.md)
 - [`docs/project-structure-and-build.md`](docs/project-structure-and-build.md)
 - [`scripts/README.md`](scripts/README.md) — i18n extract / cross-platform build
 - [`SECURITY.md`](SECURITY.md)
@@ -112,6 +118,22 @@ pnpm build:all
 ```
 
 Details: [`scripts/build/README.md`](scripts/build/README.md).
+
+### HarmonyOS build
+
+Needs DevEco Studio (it ships the SDK, `hvigor`, and `hdc`).
+
+```bash
+pnpm build:ohos        # frontend build + sync bundle into the ArkWeb rawfile
+pnpm check:ohos        # CI check: bundle freshness + bridge property names survive obfuscation
+./run.sh ohos          # build + sync + assembleHap
+./run.sh ohos --run    # install and start on a connected device
+```
+
+The HAP builds but cannot be signed from the command line — signing material is
+per-developer and needs a Huawei account login. Sign once in DevEco Studio.
+Details: [`ohos/README.md`](ohos/README.md) and
+[`docs/harmonyos-architecture.md`](docs/harmonyos-architecture.md).
 
 ### UI i18n
 
@@ -253,6 +275,7 @@ Typical artifacts (plus `.sha256` checksums when published):
 - Windows NSIS `.exe` installer
 - Linux AppImage (and Snap where configured)
 - Android APK / AAB when mobile is initialized and built
+- HarmonyOS HAP (signed in DevEco Studio; `./run.sh ohos` produces it unsigned)
 
 Build workflow configuration lives in `.github/workflows/` when present.
 

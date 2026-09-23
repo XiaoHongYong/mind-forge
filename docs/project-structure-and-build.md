@@ -10,10 +10,14 @@ How the repository is organized and how to build the desktop app.
 - `desktop/src-tauri/`
   - Rust Tauri host
   - user-path file IO (`read_user_file` / `write_user_file`) and packaging
+- `ohos/`
+  - HarmonyOS NEXT shell: ArkTS + ArkWeb hosting the same frontend bundle
+  - selector / file IO / app-data slots behind a JS bridge (`web/NativeBridge.ets`)
+  - see `docs/harmonyos-architecture.md`
 - `docs/`
   - architecture and third-party format specs (see `file-document-architecture.md`)
 - `scripts/`
-  - version / offline / round-trip gates and desktop setup helpers
+  - version / offline / round-trip checks and desktop setup helpers
 - `packages/mindmap-core/`, `packages/connectors/`
   - shared layout geometry and connector registry types
 
@@ -25,6 +29,7 @@ How the repository is organized and how to build the desktop app.
 4. Tauri dialogs supply paths; the webview fs ACL stays scoped to app dirs
 
 Canonical design: [`file-document-architecture.md`](file-document-architecture.md).
+Shell-specific: [`harmonyos-architecture.md`](harmonyos-architecture.md).
 
 ## Build Prerequisites
 
@@ -35,7 +40,7 @@ Canonical design: [`file-document-architecture.md`](file-document-architecture.m
 
 ## Release Validation
 
-Run these gates before tagging a release. All must pass.
+Run these checks before tagging a release. All must pass.
 
 ```bash
 # Import/export fidelity
@@ -49,7 +54,7 @@ node scripts/check_frontend_offline_parity.mjs --foss-root=.
 ```
 
 When a format learns a new field, raise that format's fidelity mask in
-`frontend_app/src/utils/__tests__/roundTrip.test.ts` so the gate enforces it.
+`frontend_app/src/utils/__tests__/roundTrip.test.ts` so the check enforces it.
 
 ## Build Commands
 
@@ -92,6 +97,32 @@ pnpm --dir frontend_app tauri:build
 - Windows: EXE and NSIS installer
 - Linux: AppImage / deb / snap (see packaging configs)
 - macOS: DMG
+
+## HarmonyOS Build
+
+Prerequisites:
+
+- DevEco Studio (it ships the SDK, `hvigor`, and `hdc` — no separate install)
+- `DEVECO_SDK_HOME` pointing at `<DevEco>/sdk`; the scripts derive it from
+  `$DEVECO_STUDIO_HOME` or the standard install locations
+
+```bash
+pnpm build:ohos        # frontend build + sync bundle into resources/rawfile/www
+pnpm check:ohos        # bundle is up to date + bridge property names survive obfuscation
+./run.sh ohos          # build + sync + assembleHap
+./run.sh ohos --run    # also install and start on a connected device
+```
+
+The HAP builds but **cannot be signed from the command line**: signing material
+is per-developer and requires a Huawei account login. `ohos/build-profile.json5`
+keeps `signingConfigs` empty (and gitignored). Sign once in DevEco Studio, then
+`--deploy` / `--run` work. Details: [`ohos/README.md`](../ohos/README.md).
+
+`pnpm check:ohos` is the CI check. It also enforces that every bridge property
+name (`BRIDGE_OBJECT_NAME` plus each method in `SYNC_METHODS` /
+`ASYNC_METHODS`) appears in `ohos/entry/obfuscation-rules.txt`
+`-keep-property-name` — same idea as Android R8 keep rules. A release build
+renames anything missing, and the injected object silently loses that member.
 
 ## WSL Note For Linux Builds
 
